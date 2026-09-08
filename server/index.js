@@ -1,4 +1,5 @@
 import http from 'node:http';
+import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -276,6 +277,29 @@ server.on('close', () => {
   clearInterval(sweep);
 });
 
+// ws re-emits the http server's errors on the WebSocketServer, so both need a
+// listener or a busy port becomes an unhandled 'error' event and a stack trace.
+function onStartupError(err) {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n  Port ${PORT} is already in use — The Mind may already be running.`);
+    console.error(`  Stop it, or start on another port:  PORT=3001 npm start\n`);
+    process.exit(1);
+  }
+  throw err;
+}
+server.on('error', onStartupError);
+wss.on('error', onStartupError);
+
 server.listen(PORT, () => {
-  console.log(`The Mind is listening on http://localhost:${PORT}`);
+  // Phones can't use localhost, so print the LAN addresses they should open.
+  const lan = Object.values(os.networkInterfaces())
+    .flat()
+    .filter((i) => i && i.family === 'IPv4' && !i.internal)
+    .map((i) => i.address);
+
+  console.log(`\n  The Mind is running.\n`);
+  console.log(`  This device:   http://localhost:${PORT}`);
+  for (const address of lan) console.log(`  Phones:        http://${address}:${PORT}`);
+  if (!lan.length) console.log('  No LAN address found — other devices may not be able to reach this.');
+  console.log(`\n  Everyone opens the same URL, on the same wifi. Ctrl+C to stop.\n`);
 });

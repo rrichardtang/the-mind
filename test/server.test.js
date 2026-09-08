@@ -14,10 +14,18 @@ test.before(async () => {
     env: { ...process.env, PORT: String(PORT) },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
-  // Wait for the listening banner before any client connects.
-  for await (const chunk of server.stdout) {
-    if (String(chunk).includes('listening')) break;
+  // Poll the port rather than scraping stdout, so the banner's wording is free
+  // to change without hanging the suite.
+  server.stdout.resume();
+  for (let i = 0; i < 100; i++) {
+    try {
+      await fetch(`http://127.0.0.1:${PORT}/`);
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, 100));
+    }
   }
+  throw new Error('server did not start');
 });
 
 test.after(() => server?.kill());
