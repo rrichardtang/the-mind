@@ -1,0 +1,234 @@
+// Core rules engine for The Mind. Pure logic — no networking, no I/O.
+//
+// Rules implemented (Wolfgang Warsch / NSV):
+//   * Deck is 1-100, all distinct. On level N every player is dealt N cards.
+//   * Cards must be played into one shared ascending pile, without communicating.
+//   * Playing a card while a lower card is still in someone's hand costs 1 life,
+//     and every card lower than the one played is discarded.
+//   * A shuriken may be thrown by unanimous agreement: everyone discards their
+//     lowest card face up.
+//   * Lives at 0 -> the run is lost. Finishing the last level -> the run is won.
+
+export const MIN_PLAYERS = 2;
+export const MAX_PLAYERS = 6;
+export const MAX_LIVES = 5;
+export const MAX_SHURIKENS = 4;
+const DECK_SIZE = 100;
+
+// Number of levels per player count. 2-4 players is the official table; 5-6 is
+// an unofficial extension so bigger groups can still play.
+const LEVELS_BY_PLAYERS = { 2: 12, 3: 10, 4: 8, 5: 8, 6: 8 };
+
+// Rewards granted *after* clearing the given level. The physical level cards
+// print these symbols; this table is the common 2/5/8 shuriken, 3/6/9 life
+// layout. Edit here to match the cards in your own copy of the game.
+const REWARDS = { 2: 'shuriken', 3: 'life', 5: 'shuriken', 6: 'life', 8: 'shuriken', 9: 'life' };
+
+export function levelsFor(playerCount) {
+  return LEVELS_BY_PLAYERS[playerCount] ?? 8;
+}
+
+function shuffledDeck() {
+  const deck = Array.from({ length: DECK_SIZE }, (_, i) => i + 1);
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  return deck;
+}
+
+/** Start a fresh run. `playerIds` fixes the seating for the whole game. */
+export function createGame(playerIds) {
+  const game = {
+    playerIds: [...playerIds],
+    maxLevel: levelsFor(playerIds.length),
+    level: 1,
+    lives: playerIds.length, // one life per player, per the rulebook
+    shurikens: 1,
+    hands: {},
+    pile: [], // cards successfully played, ascending
+    discarded: [], // cards lost to mistakes or shurikens
+    phase: 'ready', // ready | playing | levelCleared | won | lost
+    ready: [],
+    starVotes: [],
+    lastReward: null,
+    livesLostThisLevel: 0,
+    log: [],
+  };
+  dealLevel(game);
+  return game;
+}
+
+function dealLevel(game) {
+  const deck = shuffledDeck();
+  game.hands = {};
+  for (const id of game.playerIds) {
+    game.hands[id] = deck.splice(0, game.level).sort((a, b) => a - b);
+  }
+  game.pile = [];
+  game.discarded = [];
+  game.ready = [];
+  game.starVotes = [];
+  game.livesLostThisLevel = 0;
+  game.phase = 'ready';
+}
+
+function log(game, kind, text, extra = {}) {
+  game.log.push({ id: game.log.length + 1, kind, text, ...extra });
+  if (game.log.length > 60) game.log.splice(0, game.log.length - 60);
+}
+
+const cardsLeft = (game) => game.playerIds.flatMap((id) => game.hands[id] ?? []);
+const lowestOutstanding = (game) => Math.min(...cardsLeft(game));
+
+/** Mark a player ready for the current level. Everyone ready -> level begins. */
+export function setReady(game, playerId, activeIds) {
+  if (game.phase !== 'ready') return;
+  if (!game.ready.includes(playerId)) game.ready.push(playerId);
+  const allReady = activeIds.every((id) => game.ready.includes(id));
+  if (allReady && activeIds.length > 0) {
+    game.phase = 'playing';
+    log(game, 'level', `Level ${game.level} — concentrate.`);
+  }
+}
+
+/**
+ * Play a card. Only a player's lowest card is ever playable, since holding a
+ * lower card back is always a mistake against yourself.
+ */
+export function playCard(game, playerId, card, nameOf) {
+  if (game.phase !== 'playing') return { ok: false, error: 'The level has not started yet.' };
+  const hand = game.hands[playerId] ?? [];
+  if (!hand.includes(card)) return { ok: false, error: 'That card is not in your hand.' };
+  if (card !== hand[0]) return { ok: false, error: 'You can only play your lowest card.' };
+
+  const lowest = lowestOutstanding(game);
+  hand.shift();
+  game.pile.push({ card, playerId });
+  game.starVotes = [];
+
+  if (card === lowest) {
+    log(game, 'play', `${nameOf(playerId)} played ${card}.`, { card });
+  } else {
+    // Mistake: every card below the one played is burned, and it costs a life.
+    const burned = [];
+    for (const id of game.playerIds) {
+      const kept = [];
+      for (const c of game.hands[id]) (c < card ? burned : kept).push(c);
+      game.hands[id] = kept;
+    }
+    burned.sort((a, b) => a - b);
+    game.discarded.push(...burned);
+    game.lives -= 1;
+    game.livesLostThisLevel += 1;
+    log(game, 'mistake', `${nameOf(playerId)} played ${card} — ${burned.join(', ')} were still out. Lost a life.`, {
+      card,
+      burned,
+    });
+    if (game.lives <= 0) {
+      game.lives = 0;
+      game.phase = 'lost';
+      log(game, 'lost', 'Out of lives. The run is over.');
+      return { ok: true };
+    }
+  }
+
+  checkLevelEnd(game);
+  return { ok: true };
+}
+
+/** Vote to throw a shuriken. Unanimous among connected players -> it lands. */
+export function toggleStarVote(game, playerId, activeIds, nameOf) {
+  if (game.phase !== 'playing') return { ok: false, error: 'The level has not started yet.' };
+  if (game.shurikens <= 0) return { ok: false, error: 'No shurikens left.' };
+
+  const i = game.starVotes.indexOf(playerId);
+  if (i >= 0) game.starVotes.splice(i, 1);
+  else game.starVotes.push(playerId);
+
+  if (activeIds.length > 0 && activeIds.every((id) => game.starVotes.includes(id))) {
+    throwStar(game, nameOf);
+  }
+  return { ok: true };
+}
+
+function throwStar(game, nameOf) {
+  game.shurikens -= 1;
+  game.starVotes = [];
+  const revealed = [];
+  for (const id of game.playerIds) {
+    const hand = game.hands[id];
+    if (!hand.length) continue;
+    const card = hand.shift();
+    game.discarded.push(card);
+    revealed.push({ playerId: id, name: nameOf(id), card });
+  }
+  game.discarded.sort((a, b) => a - b);
+  const summary = revealed.map((r) => `${r.name} ${r.card}`).join(', ');
+  log(game, 'shuriken', `Shuriken thrown — discarded ${summary || 'nothing'}.`, { revealed });
+  checkLevelEnd(game);
+}
+
+function checkLevelEnd(game) {
+  if (cardsLeft(game).length > 0) return;
+
+  if (game.level >= game.maxLevel) {
+    game.phase = 'won';
+    log(game, 'won', `Level ${game.level} cleared. You beat The Mind.`);
+    return;
+  }
+
+  const reward = REWARDS[game.level] ?? null;
+  game.lastReward = null;
+  if (reward === 'life' && game.lives < MAX_LIVES) {
+    game.lives += 1;
+    game.lastReward = 'life';
+  } else if (reward === 'shuriken' && game.shurikens < MAX_SHURIKENS) {
+    game.shurikens += 1;
+    game.lastReward = 'shuriken';
+  }
+  game.phase = 'levelCleared';
+  const suffix = game.lastReward === 'life' ? ' Gained a life.' : game.lastReward === 'shuriken' ? ' Gained a shuriken.' : '';
+  log(game, 'cleared', `Level ${game.level} cleared.${suffix}`);
+}
+
+/** Advance to the next level and deal fresh hands. */
+export function nextLevel(game) {
+  if (game.phase !== 'levelCleared') return;
+  game.level += 1;
+  game.lastReward = null;
+  dealLevel(game);
+}
+
+/**
+ * View of the game for one player: their own hand in full, everyone else's as
+ * a count only. This is the whole reason the rules live on the server.
+ */
+export function viewFor(game, playerId, players) {
+  return {
+    level: game.level,
+    maxLevel: game.maxLevel,
+    lives: game.lives,
+    maxLives: MAX_LIVES,
+    shurikens: game.shurikens,
+    phase: game.phase,
+    hand: game.hands[playerId] ?? [],
+    pile: game.pile.map((p) => p.card),
+    topCard: game.pile.length ? game.pile[game.pile.length - 1].card : null,
+    discarded: game.discarded,
+    cardsRemaining: cardsLeft(game).length,
+    lastReward: game.lastReward,
+    livesLostThisLevel: game.livesLostThisLevel,
+    ready: game.ready,
+    starVotes: game.starVotes,
+    log: game.log.slice(-12),
+    seats: game.playerIds.map((id) => ({
+      id,
+      name: players.get(id)?.name ?? 'Player',
+      connected: players.get(id)?.connected ?? false,
+      cards: (game.hands[id] ?? []).length,
+      ready: game.ready.includes(id),
+      votedStar: game.starVotes.includes(id),
+    })),
+  };
+}
