@@ -29,7 +29,12 @@ one pile in **ascending order — without communicating**. No talking, no gestur
 - Clearing certain levels earns a bonus life or shuriken.
 - Lives hit zero and the run ends. Clear the last level and you've beaten The Mind.
 
-Only your **lowest card** is tappable. Holding a lower card back is always a mistake against
+Your hand is always sorted ascending. Your **lowest card fills most of the screen** — tap it to
+play it, and it flies up into the pile as the next card rises to take its place. The strip along
+the bottom is the rest of your hand at a glance, and the row above the big card is everything
+already resolved this level: played cards plain, burned cards struck through.
+
+Only your lowest card is ever playable. Holding a lower card back is always a mistake against
 yourself, so this costs you nothing and saves you from fat-fingering a card out of order.
 
 | Players | Levels | Starting lives | Starting shurikens |

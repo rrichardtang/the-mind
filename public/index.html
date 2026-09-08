@@ -83,14 +83,22 @@
   <ul id="seats" class="seats"></ul>
 
   <main class="table">
-    <div id="pile" class="pile">
-      <div class="pile-slot"><span id="pile-card" class="pile-card">—</span></div>
-      <p id="pile-note" class="pile-note">Waiting to begin</p>
+    <!-- Everything already resolved this level, ascending: played, and burned struck through. -->
+    <div class="strip">
+      <div id="pile-trail" class="pile-trail"></div>
+      <span id="pile-count" class="pile-count"></span>
     </div>
-    <div id="discard" class="discard" hidden></div>
-  </main>
 
-  <div id="feed" class="feed" aria-live="polite"></div>
+    <div class="hero-wrap">
+      <button id="hero" class="hero">
+        <span id="hero-num" class="hero-num">—</span>
+        <span id="hero-hint" class="hero-hint"></span>
+      </button>
+      <div id="ghosts" class="ghosts" aria-hidden="true"></div>
+    </div>
+
+    <div id="feed" class="feed" aria-live="polite"></div>
+  </main>
 
   <!-- Ready gate -->
   <div id="overlay-ready" class="overlay" hidden>

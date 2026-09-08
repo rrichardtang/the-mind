@@ -20,7 +20,7 @@
   let state = null;       // latest server state
   let reconnectAt = 500;  // backoff, ms
   let intent = null;      // pending {type:'create'|'join', ...} to send once open
-  let lastTopCard = null;
+  let heroValue = null;   // card on the hero now, so we only animate real changes
   let lastLives = null;
   let lastLogId = 0;
 
@@ -144,11 +144,11 @@
 
     renderSeats(g);
     renderPile(g);
+    renderHero(g);
     renderFeed(g);
     renderHand(g);
     renderOverlays(g);
 
-    lastTopCard = g.topCard;
     lastLives = g.lives;
   }
 
@@ -178,33 +178,77 @@
   }
 
   function renderPile(g) {
-    const card = $('pile-card');
-    const slot = card.parentElement;
+    // One ascending timeline of everything resolved this level, so you can see
+    // both what landed and what got burned.
+    const resolved = [
+      ...g.pile.map((c) => ({ card: c, burned: false })),
+      ...g.discarded.map((c) => ({ card: c, burned: true })),
+    ].sort((a, b) => a.card - b.card);
 
-    card.textContent = g.topCard ?? '—';
-    card.classList.toggle('empty', g.topCard == null);
-    if (g.topCard != null && g.topCard !== lastTopCard) {
-      card.classList.remove('pop');
-      void card.offsetWidth; // restart the animation
-      card.classList.add('pop');
+    const trail = $('pile-trail');
+    trail.replaceChildren();
+    if (resolved.length === 0) {
+      trail.append(el('span', 'empty', 'Nothing played yet'));
+    } else {
+      for (const r of resolved) {
+        const latest = !r.burned && r.card === g.topCard;
+        trail.append(el('span', `chip${r.burned ? ' burned' : ''}${latest ? ' latest' : ''}`, r.card));
+      }
+      trail.scrollLeft = trail.scrollWidth;
     }
+    $('pile-count').textContent = `${g.cardsRemaining} left`;
+  }
+
+  function renderHero(g) {
+    const hero = $('hero');
+    const lowest = g.hand.length ? g.hand[0] : null;
+    const live = lowest != null && g.phase === 'playing';
+
+    hero.classList.toggle('is-live', live);
+    hero.classList.toggle('is-idle', !live);
+    hero.disabled = !live;
+
+    if (lowest != null) {
+      $('hero-num').textContent = lowest;
+      $('hero-hint').textContent = live ? 'Tap to play' : 'Waiting';
+    } else {
+      $('hero-num').textContent = g.phase === 'ready' ? 'Get ready' : "You're out";
+      $('hero-hint').textContent = g.phase === 'ready' ? '' : 'Help the others land theirs';
+    }
+
+    // Animate a genuinely new card sliding in, not a re-render of the same one.
+    if (lowest != null && lowest !== heroValue) {
+      hero.classList.remove('enter');
+      void hero.offsetWidth; // restart the animation
+      hero.classList.add('enter');
+    }
+    heroValue = lowest;
+
     if (lastLives != null && g.lives < lastLives) {
-      slot.classList.remove('shake');
-      void slot.offsetWidth;
-      slot.classList.add('shake');
+      hero.classList.remove('wrong');
+      void hero.offsetWidth;
+      hero.classList.add('wrong');
       buzz([40, 60, 40]);
     }
-    // The pile is re-rendered on every state, so a level change must not
-    // inherit the previous level's mistake styling.
-    if (g.pile.length === 0 && g.discarded.length === 0) slot.classList.remove('shake');
+  }
 
-    $('pile-note').textContent = g.phase === 'ready'
-      ? 'Waiting for everyone to focus'
-      : `${g.cardsRemaining} card${g.cardsRemaining === 1 ? '' : 's'} still in hands`;
+  /** Fly the played card up toward the pile strip, on tap, before the server replies. */
+  function throwGhost(card) {
+    const ghost = el('div', 'ghost', card);
+    ghost.addEventListener('animationend', () => ghost.remove());
+    $('ghosts').append(ghost);
+  }
 
-    const discard = $('discard');
-    discard.hidden = g.discarded.length === 0;
-    discard.replaceChildren(...g.discarded.map((c) => el('span', 'chip', c)));
+  function playLowest() {
+    const g = state?.game;
+    if (!g || g.phase !== 'playing' || !g.hand.length) return;
+    const card = g.hand[0];
+    // Optimistic: animate on tap so it feels instant, then let the server's
+    // next state decide what actually happened.
+    throwGhost(card);
+    heroValue = null; // make the next card animate in
+    buzz(12);
+    send({ type: 'play', card });
   }
 
   function renderFeed(g) {
@@ -227,28 +271,17 @@
     if (g.hand.length === 0) {
       node.append(el('div', 'hand-empty', 'No cards left — help the others land theirs.'));
     } else {
-      // Only the lowest card is playable: holding it back is always a mistake
-      // against yourself, so this just prevents fat-finger disasters.
-      g.hand.forEach((card, i) => {
-        const playable = i === 0 && g.phase === 'playing';
-        const btn = el('button', `card ${playable ? 'playable' : 'locked'}`, card);
-        btn.disabled = !playable;
-        if (playable) {
-          btn.addEventListener('click', () => { buzz(12); send({ type: 'play', card }); });
-        }
-        node.append(btn);
-      });
+      // The slider shows your hand at a glance; the hero card is what you press.
+      g.hand.forEach((card, i) => node.append(el('div', `card${i === 0 ? ' next' : ''}`, card)));
+      node.scrollLeft = 0;
     }
 
-    $('hand-label').textContent = g.hand.length
-      ? `Your hand · ${g.hand.length}`
-      : 'Your hand · empty';
+    $('hand-label').textContent = g.hand.length ? `Your hand · ${g.hand.length}` : 'Your hand · empty';
 
     const star = $('btn-star');
-    const youVoted = g.starVotes.includes(state.you.id);
     const votesNeeded = g.seats.filter((s) => s.connected).length;
     star.disabled = g.phase !== 'playing' || g.shurikens === 0;
-    star.classList.toggle('voted', youVoted);
+    star.classList.toggle('voted', g.starVotes.includes(state.you.id));
     $('star-label').textContent = g.shurikens === 0
       ? 'No shurikens'
       : g.starVotes.length > 0
@@ -359,6 +392,7 @@
     }
   });
 
+  $('hero').addEventListener('click', playLowest);
   $('btn-start').addEventListener('click', () => send({ type: 'start' }));
   $('btn-ready').addEventListener('click', () => send({ type: 'ready' }));
   $('btn-star').addEventListener('click', () => send({ type: 'star' }));
