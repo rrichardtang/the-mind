@@ -18,6 +18,35 @@ Then open the URL on every phone. On the same wifi, use your machine's LAN addre
 
 `npm run dev` restarts on file changes. `PORT=8080 npm start` changes the port.
 
+## Deploying to Railway
+
+The repo is Railway-ready: [`railway.json`](railway.json) pins the start command, a
+`/healthz` healthcheck and a single replica, and the server binds `0.0.0.0` on `$PORT`.
+
+The simplest route is Railway's GitHub integration — no CLI, no tokens:
+
+1. [railway.com/new](https://railway.com/new) → **Deploy from GitHub repo** → pick `the-mind`.
+2. Under **Settings → Networking**, click **Generate Domain**.
+3. Open the generated `*.up.railway.app` URL on every phone.
+
+Or with the CLI, from a checkout of this branch:
+
+```bash
+npm i -g @railway/cli
+railway login
+railway init            # creates the project
+railway up              # builds and deploys
+railway domain          # generates the public URL
+```
+
+Nothing needs configuring — no environment variables, no database. Railway sets `PORT`
+itself, and the client picks `wss://` automatically over HTTPS.
+
+**Keep it at one replica.** Rooms live in memory, so a second instance would land players
+in different copies of the same room code. `railway.json` sets `numReplicas: 1`; leave it
+there unless you move room state into Redis or similar. Restarting the service also drops
+any game in progress, so avoid redeploying mid-game.
+
 ## Playing
 
 Level N deals every player N cards from a 1–100 deck. Together you have to play them all into

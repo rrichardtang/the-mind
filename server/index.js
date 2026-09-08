@@ -35,6 +35,14 @@ const MIME = {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+
+  // Cheap liveness probe for hosts that poll one (Railway's healthcheckPath).
+  if (url.pathname === '/healthz') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, rooms: rooms.size, uptime: Math.round(process.uptime()) }));
+    return;
+  }
+
   let filePath = path.join(PUBLIC_DIR, decodeURIComponent(url.pathname));
   // Keep requests inside public/, and treat unknown paths as the app shell.
   if (!filePath.startsWith(PUBLIC_DIR)) filePath = PUBLIC_DIR;

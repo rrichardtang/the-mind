@@ -282,3 +282,15 @@ test('the app shell is served over http', async () => {
   const css = await fetch(`http://127.0.0.1:${PORT}/styles.css`);
   assert.equal(css.headers.get('content-type'), 'text/css; charset=utf-8');
 });
+
+test('the healthcheck endpoint reports liveness', async () => {
+  const res = await fetch(`http://127.0.0.1:${PORT}/healthz`);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'application/json');
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(typeof body.rooms, 'number');
+  // It must not fall through to the SPA shell, or a host would healthcheck the
+  // page instead of the server.
+  assert.equal(typeof body.uptime, 'number');
+});
