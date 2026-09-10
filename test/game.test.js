@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, setReady, playCard, toggleStarVote, nextLevel, viewFor, levelsFor } from '../server/game.js';
+import {
+  createGame,
+  setReady,
+  playCard,
+  toggleStarVote,
+  nextLevel,
+  checkTimeout,
+  viewFor,
+  levelsFor,
+  SECONDS_PER_CARD,
+} from '../server/game.js';
 
 const IDS = ['a', 'b', 'c'];
 const nameOf = (id) => id.toUpperCase();
@@ -222,4 +232,100 @@ test('a clean level reports no lives lost', () => {
   playCard(g, 'c', 70, nameOf);
   assert.equal(g.phase, 'levelCleared');
   assert.equal(g.livesLostThisLevel, 0);
+});
+
+/* ── Timed runs ─────────────────────────────────────────── */
+
+const timedGame = () => createGame(IDS, { timed: true });
+
+test('the clock only starts when the level does', () => {
+  const g = timedGame();
+  setReady(g, 'a', IDS);
+  assert.equal(g.deadlineAt, null, 'the ready gate is untimed');
+  setReady(g, 'b', IDS);
+  setReady(g, 'c', IDS);
+  const expected = Date.now() + SECONDS_PER_CARD * 1000 * IDS.length * g.level;
+  assert.ok(Math.abs(g.deadlineAt - expected) < 1000, '20s per card dealt this level');
+});
+
+test('an untimed run never gets a deadline', () => {
+  const g = createGame(IDS);
+  IDS.forEach((id) => setReady(g, id, IDS));
+  assert.equal(g.timed, false);
+  assert.equal(g.deadlineAt, null);
+  checkTimeout(g, Date.now() + 10 * 60 * 60 * 1000);
+  assert.equal(g.phase, 'playing');
+});
+
+test('clearing a level stops the clock, and the next level restarts it', () => {
+  const g = timedGame();
+  IDS.forEach((id) => setReady(g, id, IDS));
+  g.hands = { a: [5], b: [20], c: [70] };
+  playCard(g, 'a', 5, nameOf);
+  playCard(g, 'b', 20, nameOf);
+  playCard(g, 'c', 70, nameOf);
+  assert.equal(g.phase, 'levelCleared');
+  assert.equal(g.deadlineAt, null);
+
+  nextLevel(g);
+  assert.equal(g.deadlineAt, null);
+  IDS.forEach((id) => setReady(g, id, IDS));
+  assert.ok(g.deadlineAt > Date.now());
+});
+
+test('the clock running out loses the whole run', () => {
+  const g = timedGame();
+  IDS.forEach((id) => setReady(g, id, IDS));
+  const deadline = g.deadlineAt;
+
+  checkTimeout(g, deadline - 1);
+  assert.equal(g.phase, 'playing', 'a second early is still in time');
+
+  checkTimeout(g, deadline);
+  assert.equal(g.phase, 'lost');
+  assert.equal(g.lostTo, 'time');
+  assert.equal(g.deadlineAt, null);
+
+  const log = g.log.length;
+  checkTimeout(g, deadline + 60000);
+  assert.equal(g.log.length, log, 'checkTimeout is safe to call again');
+});
+
+test('running out of lives is distinguishable from running out of time', () => {
+  const g = timedGame();
+  IDS.forEach((id) => setReady(g, id, IDS));
+  g.hands = { a: [90], b: [1], c: [2] };
+  g.lives = 1;
+  playCard(g, 'a', 90, nameOf);
+  assert.equal(g.phase, 'lost');
+  assert.equal(g.lostTo, 'lives');
+  assert.equal(g.deadlineAt, null);
+});
+
+test('a won run cannot then time out', () => {
+  const g = timedGame();
+  IDS.forEach((id) => setReady(g, id, IDS));
+  g.level = g.maxLevel;
+  g.hands = { a: [5], b: [20], c: [70] };
+  playCard(g, 'a', 5, nameOf);
+  playCard(g, 'b', 20, nameOf);
+  playCard(g, 'c', 70, nameOf);
+  assert.equal(g.phase, 'won');
+  checkTimeout(g, Date.now() + 10 * 60 * 60 * 1000);
+  assert.equal(g.phase, 'won');
+  assert.equal(g.lostTo, null);
+});
+
+test('the view sends time remaining, never the raw deadline', () => {
+  const g = timedGame();
+  IDS.forEach((id) => setReady(g, id, IDS));
+  const players = new Map(IDS.map((id) => [id, { id, name: nameOf(id), connected: true }]));
+
+  const view = viewFor(g, 'a', players, g.deadlineAt - 5000);
+  assert.equal(view.timed, true);
+  assert.equal(view.msRemaining, 5000);
+  assert.equal('deadlineAt' in view, false);
+
+  assert.equal(viewFor(g, 'a', players, g.deadlineAt + 5000).msRemaining, 0, 'clamped at zero');
+  assert.equal(viewFor(createGame(IDS), 'a', players).msRemaining, null);
 });

@@ -427,6 +427,48 @@ test('only the host removes players, and never mid-game or themselves', async ()
   guest.close();
 });
 
+/** Two clients in a fresh room, the game started with the given options. */
+async function startedRoom(options = {}) {
+  const host = await Client.open();
+  const guest = await Client.open();
+  host.send({ type: 'create', name: 'Richard' });
+  const { code } = await host.next((m) => m.type === 'joined');
+  guest.send({ type: 'join', code, name: 'Sam' });
+  await guest.next((m) => m.type === 'joined');
+  await host.state((m) => m.lobby.length === 2);
+  host.send({ type: 'start', ...options });
+  const started = await host.state((m) => m.game);
+  await guest.state((m) => m.game);
+  return { host, guest, started };
+}
+
+test('an untimed run carries no clock', async () => {
+  const { host, guest } = await startedRoom();
+  host.send({ type: 'ready' });
+  guest.send({ type: 'ready' });
+  const playing = await host.state((m) => m.game?.phase === 'playing');
+  assert.equal(playing.game.timed, false);
+  assert.equal(playing.game.msRemaining, null);
+  host.close();
+  guest.close();
+});
+
+test('a timed run counts down once the level starts', async () => {
+  const { host, guest, started } = await startedRoom({ timed: true });
+  assert.equal(started.game.phase, 'ready');
+  assert.equal(started.game.timed, true);
+  assert.equal(started.game.msRemaining, null, 'the ready gate is untimed');
+
+  host.send({ type: 'ready' });
+  guest.send({ type: 'ready' });
+  const playing = await guest.state((m) => m.game?.phase === 'playing');
+  // Level 1, two players: 2 cards x 20s. Some of it is already gone in flight.
+  assert.ok(playing.game.msRemaining > 0 && playing.game.msRemaining <= 40000);
+  assert.equal('deadlineAt' in playing.game, false);
+  host.close();
+  guest.close();
+});
+
 test('the app shell is served over http', async () => {
   const res = await fetch(`http://127.0.0.1:${PORT}/`);
   assert.equal(res.status, 200);

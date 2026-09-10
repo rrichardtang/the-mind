@@ -1,0 +1,3 @@
+- `npm install` is not pre-run in fresh web sessions; `test/server.test.js` fails with `Cannot find package 'ws'` until you run it.
+- E2E helper gotcha: `Client.state()` consumes queued messages, so a shared "start the room" helper must return the state it awaited rather than letting the test await the same one again (it will hang for 4s and fail).
+- Room timers (`room.timerId`) are driven from `broadcast()` via `syncTimer(room)`; `deleteRoom()` and `endGame()` reuse it so nothing fires against a dead room.

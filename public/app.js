@@ -127,6 +127,7 @@
     store.del('playerId');
     intent = null;
     state = null;
+    stopTimer();
     setEntering(false);
     const socket = ws;
     ws = null;
@@ -142,7 +143,7 @@
 
   function render(next) {
     state = next;
-    if (!state.game) { renderLobby(); show('lobby'); return; }
+    if (!state.game) { stopTimer(); renderLobby(); show('lobby'); return; }
     renderGame();
     show('game');
   }
@@ -168,6 +169,8 @@
       list.append(li);
     }
 
+    $('timed-toggle').hidden = !state.you.isHost;
+
     const enough = state.lobby.length >= state.minPlayers;
     const start = $('btn-start');
     start.hidden = !state.you.isHost;
@@ -188,6 +191,7 @@
     renderTokens($('hud-lives'), g.lives, g.maxLives, 'life', '♥');
     renderTokens($('hud-shurikens'), g.shurikens, 4, 'star', '✦');
 
+    renderTimer(g);
     renderSeats(g);
     renderPile(g);
     renderHero(g);
@@ -196,6 +200,36 @@
     renderOverlays(g);
 
     lastLives = g.lives;
+  }
+
+  /**
+   * Count down from the moment the state arrived rather than from any clock
+   * value the server sends, so a wrong phone clock cannot skew the display.
+   * The server alone decides when the time is actually up.
+   */
+  let timerEndsAt = null;
+  let timerInterval = null;
+
+  function renderTimer(g) {
+    const running = g.timed && g.msRemaining != null;
+    $('hud-timer').hidden = !running;
+    if (!running) { stopTimer(); return; }
+    timerEndsAt = performance.now() + g.msRemaining;
+    tickTimer();
+    timerInterval ??= setInterval(tickTimer, 250);
+  }
+
+  function tickTimer() {
+    const left = Math.max(0, timerEndsAt - performance.now());
+    const secs = Math.ceil(left / 1000);
+    const node = $('hud-timer');
+    node.textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+    node.classList.toggle('urgent', left <= 30000);
+  }
+
+  function stopTimer() {
+    clearInterval(timerInterval);
+    timerInterval = null;
   }
 
   function renderTokens(node, count, max, cls, glyph) {
@@ -389,8 +423,11 @@
     } else {
       icon.classList.add('bad');
       icon.textContent = '✕';
-      $('result-title').textContent = 'Out of lives';
-      $('result-body').textContent = `You made it to level ${g.level} of ${g.maxLevel}.`;
+      const outOfTime = g.lostTo === 'time';
+      $('result-title').textContent = outOfTime ? 'Out of time' : 'Out of lives';
+      $('result-body').textContent = outOfTime
+        ? `The clock ran out on level ${g.level} of ${g.maxLevel}.`
+        : `You made it to level ${g.level} of ${g.maxLevel}.`;
       btn.textContent = state.you.isHost ? 'Play again' : 'Waiting for the host…';
       btn.disabled = !state.you.isHost;
       btn.onclick = () => send({ type: 'playAgain' });
@@ -447,7 +484,7 @@
   });
 
   $('hero').addEventListener('click', playLowest);
-  $('btn-start').addEventListener('click', () => send({ type: 'start' }));
+  $('btn-start').addEventListener('click', () => send({ type: 'start', timed: $('input-timed').checked }));
   $('btn-ready').addEventListener('click', () => send({ type: 'ready' }));
   $('btn-star').addEventListener('click', () => send({ type: 'star' }));
 

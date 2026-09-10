@@ -24,6 +24,10 @@ const LEVELS_BY_PLAYERS = { 2: 12, 3: 10, 4: 8, 5: 8, 6: 8 };
 // layout. Edit here to match the cards in your own copy of the game.
 const REWARDS = { 2: 'shuriken', 3: 'life', 5: 'shuriken', 6: 'life', 8: 'shuriken', 9: 'life' };
 
+// Optional per-level clock: this many seconds for every card dealt this level,
+// so the pressure scales with the hands on the table. Edit here to retune it.
+export const SECONDS_PER_CARD = 20;
+
 export function levelsFor(playerCount) {
   return LEVELS_BY_PLAYERS[playerCount] ?? 8;
 }
@@ -38,7 +42,7 @@ function shuffledDeck() {
 }
 
 /** Start a fresh run. `playerIds` fixes the seating for the whole game. */
-export function createGame(playerIds) {
+export function createGame(playerIds, { timed = false } = {}) {
   const game = {
     playerIds: [...playerIds],
     maxLevel: levelsFor(playerIds.length),
@@ -49,6 +53,9 @@ export function createGame(playerIds) {
     pile: [], // cards successfully played, ascending
     discarded: [], // cards lost to mistakes or shurikens
     phase: 'ready', // ready | playing | levelCleared | won | lost
+    timed,
+    deadlineAt: null, // epoch ms while a level's clock runs, else null
+    lostTo: null, // 'lives' | 'time', once the run is lost
     ready: [],
     starVotes: [],
     lastReward: null,
@@ -71,6 +78,14 @@ function dealLevel(game) {
   game.starVotes = [];
   game.livesLostThisLevel = 0;
   game.phase = 'ready';
+  game.deadlineAt = null;
+}
+
+function loseRun(game, lostTo, text) {
+  game.phase = 'lost';
+  game.lostTo = lostTo;
+  game.deadlineAt = null;
+  log(game, 'lost', text);
 }
 
 function log(game, kind, text, extra = {}) {
@@ -88,6 +103,8 @@ export function setReady(game, playerId, activeIds) {
   const allReady = activeIds.every((id) => game.ready.includes(id));
   if (allReady && activeIds.length > 0) {
     game.phase = 'playing';
+    // The clock only starts once play does — the ready gate is untimed.
+    if (game.timed) game.deadlineAt = Date.now() + SECONDS_PER_CARD * 1000 * game.playerIds.length * game.level;
     log(game, 'level', `Level ${game.level} — concentrate.`);
   }
 }
@@ -127,8 +144,7 @@ export function playCard(game, playerId, card, nameOf) {
     });
     if (game.lives <= 0) {
       game.lives = 0;
-      game.phase = 'lost';
-      log(game, 'lost', 'Out of lives. The run is over.');
+      loseRun(game, 'lives', 'Out of lives. The run is over.');
       return { ok: true };
     }
   }
@@ -172,6 +188,8 @@ function throwStar(game, nameOf) {
 function checkLevelEnd(game) {
   if (cardsLeft(game).length > 0) return;
 
+  game.deadlineAt = null;
+
   if (game.level >= game.maxLevel) {
     game.phase = 'won';
     log(game, 'won', `Level ${game.level} cleared. You beat The Mind.`);
@@ -192,6 +210,15 @@ function checkLevelEnd(game) {
   log(game, 'cleared', `Level ${game.level} cleared.${suffix}`);
 }
 
+/**
+ * End the run if the level's clock has run out. Safe to call at any time: it
+ * only ever fires on a timed level that is still being played.
+ */
+export function checkTimeout(game, now) {
+  if (!game.timed || game.phase !== 'playing' || game.deadlineAt == null || now < game.deadlineAt) return;
+  loseRun(game, 'time', 'The clock ran out. The run is over.');
+}
+
 /** Advance to the next level and deal fresh hands. */
 export function nextLevel(game) {
   if (game.phase !== 'levelCleared') return;
@@ -204,7 +231,7 @@ export function nextLevel(game) {
  * View of the game for one player: their own hand in full, everyone else's as
  * a count only. This is the whole reason the rules live on the server.
  */
-export function viewFor(game, playerId, players) {
+export function viewFor(game, playerId, players, now = Date.now()) {
   return {
     level: game.level,
     maxLevel: game.maxLevel,
@@ -212,6 +239,11 @@ export function viewFor(game, playerId, players) {
     maxLives: MAX_LIVES,
     shurikens: game.shurikens,
     phase: game.phase,
+    timed: game.timed,
+    // Remaining time, not the deadline: the client counts down from when the
+    // state lands, so a skewed phone clock can never desync the display.
+    msRemaining: game.deadlineAt == null ? null : Math.max(0, game.deadlineAt - now),
+    lostTo: game.lostTo,
     hand: game.hands[playerId] ?? [],
     pile: game.pile.map((p) => p.card),
     topCard: game.pile.length ? game.pile[game.pile.length - 1].card : null,

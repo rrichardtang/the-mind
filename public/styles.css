@@ -251,6 +251,18 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 }
 
 .lobby-foot { display: grid; gap: 8px; justify-items: center; }
+.timed-toggle {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.timed-toggle input { width: 18px; height: 18px; flex: none; accent-color: var(--accent); margin: 0; }
 .lobby-foot .btn { width: 100%; }
 
 /* ── HUD ────────────────────────────────────────────────── */
@@ -262,6 +274,26 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .hud-level .eyebrow { margin-right: 2px; }
 .hud-level strong { font-size: 1.25rem; }
 .hud-sub { color: var(--text-faint); font-size: 0.8rem; }
+
+.hud-timer {
+  margin-left: 14px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: var(--text-dim);
+}
+.hud-timer.urgent {
+  color: var(--bad);
+  border-color: var(--bad);
+  animation: timerPulse 1s ease-in-out infinite;
+}
+@keyframes timerPulse {
+  50% { opacity: 0.45; }
+}
 
 .hud-tokens { margin-left: auto; display: flex; gap: 14px; }
 .token-group { display: flex; gap: 4px; align-items: center; }

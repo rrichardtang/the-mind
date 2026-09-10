@@ -11,6 +11,7 @@ import {
   playCard,
   toggleStarVote,
   nextLevel,
+  checkTimeout,
   viewFor,
   levelsFor,
   MIN_PLAYERS,
@@ -61,7 +62,7 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
-/** code -> { code, hostId, players: Map, removed: Set, game, updatedAt } */
+/** code -> { code, hostId, players: Map, removed: Set, game, timerId, updatedAt } */
 const rooms = new Map();
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no look-alike glyphs
@@ -99,8 +100,31 @@ function roomState(room, playerId) {
   };
 }
 
+/**
+ * One timer per room, re-armed from the level's own deadline on every state
+ * change. Nobody has to touch anything for a level to time out, so a real
+ * setTimeout is the only thing that can end it.
+ */
+function syncTimer(room) {
+  clearTimeout(room.timerId);
+  room.timerId = null;
+  const game = room.game;
+  if (!game?.timed || game.deadlineAt == null) return;
+  room.timerId = setTimeout(() => {
+    checkTimeout(game, Date.now());
+    broadcast(room);
+  }, Math.max(0, game.deadlineAt - Date.now()));
+}
+
+/** Drop a room for good, timer and all, so nothing fires against a dead room. */
+function deleteRoom(room) {
+  clearTimeout(room.timerId);
+  rooms.delete(room.code);
+}
+
 function broadcast(room) {
   room.updatedAt = Date.now();
+  syncTimer(room);
   for (const p of room.players.values()) {
     if (p.connected) send(p.ws, roomState(room, p.id));
   }
@@ -114,6 +138,7 @@ const nameOfIn = (room) => (id) => room.players.get(id)?.name ?? 'Player';
  */
 function endGame(room) {
   room.game = null;
+  syncTimer(room); // not every caller broadcasts afterwards, so disarm here too
   for (const p of room.players.values()) if (!p.connected) room.players.delete(p.id);
   if (!room.players.has(room.hostId)) room.hostId = room.players.keys().next().value ?? null;
 }
@@ -126,6 +151,7 @@ function handleCreate(ws, ctx, msg) {
     players: new Map(),
     removed: new Set(), // playerIds the host evicted, so they cannot auto-rejoin
     game: null,
+    timerId: null,
     updatedAt: Date.now(),
   };
   rooms.set(room.code, room);
@@ -190,7 +216,7 @@ function dropSeat(room, playerId) {
     room.players.delete(playerId);
     if (room.hostId === playerId) room.hostId = room.players.keys().next().value ?? null;
   }
-  if (room.players.size === 0) rooms.delete(room.code);
+  if (room.players.size === 0) deleteRoom(room);
   else broadcast(room);
 }
 
@@ -243,7 +269,7 @@ function handleMessage(ws, ctx, msg) {
       if (room.hostId !== ctx.playerId) return fail(ws, 'Only the host can start the game.');
       if (room.game) return fail(ws, 'The game has already started.');
       if (room.players.size < MIN_PLAYERS) return fail(ws, `You need at least ${MIN_PLAYERS} players.`);
-      room.game = createGame([...room.players.keys()]);
+      room.game = createGame([...room.players.keys()], { timed: msg.timed === true });
       return broadcast(room);
     }
 
@@ -350,7 +376,7 @@ const heartbeat = setInterval(() => {
 const sweep = setInterval(() => {
   const cutoff = Date.now() - ROOM_TTL_MS;
   for (const [code, room] of rooms) {
-    if (room.updatedAt < cutoff && activeIds(room).length === 0) rooms.delete(code);
+    if (room.updatedAt < cutoff && activeIds(room).length === 0) deleteRoom(room);
   }
 }, 10 * 60 * 1000);
 

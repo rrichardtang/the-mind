@@ -56,6 +56,9 @@ one pile in **ascending order — without communicating**. No talking, no gestur
   discarded face up.
 - A **shuriken ✦** takes unanimous agreement. Everyone then discards their lowest card face up.
 - Clearing certain levels earns a bonus life or shuriken.
+- **Timed levels** are optional — the host ticks the box in the lobby before starting. Each level
+  then gives you 20 seconds per card dealt (`20 × players × level`), and letting the clock reach
+  zero ends the whole run, not just a life.
 - Lives hit zero and the run ends. Clear the last level and you've beaten The Mind.
 
 Your hand is always sorted ascending. Your **lowest card fills most of the screen** — tap it to
@@ -80,7 +83,8 @@ yourself, so this costs you nothing and saves you from fat-fingering a card out 
 The physical game prints each level's reward on its level card. This build grants a **shuriken
 after levels 2, 5 and 8** and a **life after levels 3, 6 and 9**, capped at 5 lives and 4
 shurikens. If your copy's level cards differ, edit the `REWARDS` table at the top of
-[`server/game.js`](server/game.js) — it's the only place those are defined.
+[`server/game.js`](server/game.js) — it's the only place those are defined. The timed mode's
+seconds-per-card lives beside it as `SECONDS_PER_CARD`, likewise the only place to change it.
 
 ## Notes
 
