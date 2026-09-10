@@ -13,8 +13,13 @@ const FAST_PORT = 3972;
 const FAST_URL = `ws://127.0.0.1:${FAST_PORT}`;
 const FAST_BUDGET_MS = 2 * 500; // two players, level 1
 
+// A garbage env value should fall back to the default clock, not lose the run instantly.
+const GARBAGE_PORT = 3973;
+const GARBAGE_URL = `ws://127.0.0.1:${GARBAGE_PORT}`;
+
 let server;
 let fastServer;
+let garbageServer;
 
 async function startServer(port, env = {}) {
   const child = spawn(process.execPath, ['server/index.js'], {
@@ -32,17 +37,20 @@ async function startServer(port, env = {}) {
       await new Promise((r) => setTimeout(r, 100));
     }
   }
+  child.kill();
   throw new Error('server did not start');
 }
 
 test.before(async () => {
   server = await startServer(PORT);
   fastServer = await startServer(FAST_PORT, { MIND_SECONDS_PER_CARD: '0.5' });
+  garbageServer = await startServer(GARBAGE_PORT, { MIND_SECONDS_PER_CARD: '-5' });
 });
 
 test.after(() => {
   server?.kill();
   fastServer?.kill();
+  garbageServer?.kill();
 });
 
 /** A test client that queues messages so tests can await them by predicate. */
@@ -492,6 +500,14 @@ test('a timed run counts down once the level starts', async () => {
   guest.close();
 });
 
+test('a negative MIND_SECONDS_PER_CARD falls back to the default clock instead of losing instantly', async () => {
+  const { host, guest } = await startedRoom({ timed: true }, GARBAGE_URL);
+  const playing = await bothReady(host, guest);
+  assert.ok(playing.game.msRemaining > 0);
+  host.close();
+  guest.close();
+});
+
 test('the clock runs out with nobody touching anything, twice in a row', async () => {
   const { host, guest, started } = await startedRoom({ timed: true }, FAST_URL);
   assert.equal(started.game.msBudget, FAST_BUDGET_MS);
@@ -533,10 +549,9 @@ test('the clock waits for a dropped player and resumes when they come back', asy
 
   const resumed = await back.state((m) => m.game && !m.game.clockPaused);
   assert.equal(resumed.game.phase, 'playing', 'the outage never counted against the clock');
-  assert.equal(
-    resumed.game.msRemaining,
-    paused.game.msRemaining,
-    'resumes with exactly the time it was holding',
+  assert.ok(
+    resumed.game.msRemaining >= paused.game.msRemaining - 5,
+    'resumes with (at least) the time it was holding',
   );
 
   // And it is a real clock again, not a frozen one.

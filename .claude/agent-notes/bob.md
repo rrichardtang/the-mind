@@ -5,3 +5,4 @@
 - `broadcast()` is the single funnel for connection changes (dropSeat/joinRoom/evict all end there), so pause/resume and the setTimeout both sync from it, off one `Date.now()` read for the whole broadcast.
 - E2E timing tests run against a second server on port 3972 spawned with `MIND_SECONDS_PER_CARD=0.5`; `Client.open(url)` takes the URL.
 - `Client.state()` with no predicate can return a *stale queued* state (e.g. a pre-game one) — always match on what you actually want.
+- Third test server on port 3973 (`GARBAGE_URL`) covers `MIND_SECONDS_PER_CARD` garbage-value fallback; reuse it rather than spinning a 4th.

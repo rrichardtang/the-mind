@@ -26,7 +26,8 @@ const PORT = process.env.PORT || 3000;
 const ROOM_TTL_MS = 6 * 60 * 60 * 1000; // rooms are dropped 6h after last activity
 // Only the tests ever want a shorter clock, so it stays an env knob rather
 // than something a client can ask for over the wire.
-const LEVEL_SECONDS_PER_CARD = Number(process.env.MIND_SECONDS_PER_CARD) || SECONDS_PER_CARD;
+const envSecondsPerCard = Number(process.env.MIND_SECONDS_PER_CARD);
+const LEVEL_SECONDS_PER_CARD = envSecondsPerCard > 0 ? envSecondsPerCard : SECONDS_PER_CARD;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -159,7 +160,11 @@ const nameOfIn = (room) => (id) => room.players.get(id)?.name ?? 'Player';
  */
 function endGame(room) {
   room.game = null;
-  syncTimer(room, Date.now()); // handleJoin can bail out on a full room without broadcasting
+  // Defensive: room.timerId can only be armed while phase is 'playing', and every
+  // transition into 'won'/'lost' broadcasts (which disarms it) before endGame runs.
+  // So this never has a timer to clear today — kept as a guard against that invariant
+  // breaking later, not because a live path needs it.
+  syncTimer(room, Date.now());
   for (const p of room.players.values()) if (!p.connected) room.players.delete(p.id);
   if (!room.players.has(room.hostId)) room.hostId = room.players.keys().next().value ?? null;
 }

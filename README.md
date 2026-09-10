@@ -85,6 +85,9 @@ after levels 2, 5 and 8** and a **life after levels 3, 6 and 9**, capped at 5 li
 shurikens. If your copy's level cards differ, edit the `REWARDS` table at the top of
 [`server/game.js`](server/game.js) — it's the only place those are defined. The timed mode's
 seconds-per-card lives beside it as `SECONDS_PER_CARD`, likewise the only place to change it.
+`MIND_SECONDS_PER_CARD` overrides it at runtime so the timer can be tested in under a second.
+It's a testing knob, not a deployment setting — change `SECONDS_PER_CARD` if you want a
+different clock for real games.
 
 ## Notes
 
