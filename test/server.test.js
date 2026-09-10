@@ -7,35 +7,50 @@ import { WebSocket } from 'ws';
 const PORT = 3971;
 const URL = `ws://127.0.0.1:${PORT}`;
 
-let server;
+// A second server whose levels are worth half a second a card, so a run can
+// actually be played out against the clock inside a test.
+const FAST_PORT = 3972;
+const FAST_URL = `ws://127.0.0.1:${FAST_PORT}`;
+const FAST_BUDGET_MS = 2 * 500; // two players, level 1
 
-test.before(async () => {
-  server = spawn(process.execPath, ['server/index.js'], {
-    env: { ...process.env, PORT: String(PORT) },
+let server;
+let fastServer;
+
+async function startServer(port, env = {}) {
+  const child = spawn(process.execPath, ['server/index.js'], {
+    env: { ...process.env, ...env, PORT: String(port) },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   // Poll the port rather than scraping stdout, so the banner's wording is free
   // to change without hanging the suite.
-  server.stdout.resume();
+  child.stdout.resume();
   for (let i = 0; i < 100; i++) {
     try {
-      await fetch(`http://127.0.0.1:${PORT}/`);
-      return;
+      await fetch(`http://127.0.0.1:${port}/`);
+      return child;
     } catch {
       await new Promise((r) => setTimeout(r, 100));
     }
   }
   throw new Error('server did not start');
+}
+
+test.before(async () => {
+  server = await startServer(PORT);
+  fastServer = await startServer(FAST_PORT, { MIND_SECONDS_PER_CARD: '0.5' });
 });
 
-test.after(() => server?.kill());
+test.after(() => {
+  server?.kill();
+  fastServer?.kill();
+});
 
 /** A test client that queues messages so tests can await them by predicate. */
 class Client {
-  constructor() {
+  constructor(url = URL) {
     this.queue = [];
     this.waiters = [];
-    this.ws = new WebSocket(URL);
+    this.ws = new WebSocket(url);
     this.ws.on('message', (raw) => {
       const msg = JSON.parse(raw);
       const i = this.waiters.findIndex((w) => w.match(msg));
@@ -43,8 +58,8 @@ class Client {
       else this.queue.push(msg);
     });
   }
-  static async open() {
-    const c = new Client();
+  static async open(url) {
+    const c = new Client(url);
     await once(c.ws, 'open');
     return c;
   }
@@ -428,18 +443,26 @@ test('only the host removes players, and never mid-game or themselves', async ()
 });
 
 /** Two clients in a fresh room, the game started with the given options. */
-async function startedRoom(options = {}) {
-  const host = await Client.open();
-  const guest = await Client.open();
+async function startedRoom(options = {}, url) {
+  const host = await Client.open(url);
+  const guest = await Client.open(url);
   host.send({ type: 'create', name: 'Richard' });
   const { code } = await host.next((m) => m.type === 'joined');
   guest.send({ type: 'join', code, name: 'Sam' });
-  await guest.next((m) => m.type === 'joined');
+  const guestJoin = await guest.next((m) => m.type === 'joined');
   await host.state((m) => m.lobby.length === 2);
   host.send({ type: 'start', ...options });
   const started = await host.state((m) => m.game);
   await guest.state((m) => m.game);
-  return { host, guest, started };
+  return { host, guest, started, code, guestId: guestJoin.playerId };
+}
+
+/** Both players say ready, and the level is under way on both clients. */
+async function bothReady(host, guest) {
+  host.send({ type: 'ready' });
+  guest.send({ type: 'ready' });
+  await guest.state((m) => m.game?.phase === 'playing');
+  return host.state((m) => m.game?.phase === 'playing');
 }
 
 test('an untimed run carries no clock', async () => {
@@ -467,6 +490,61 @@ test('a timed run counts down once the level starts', async () => {
   assert.equal('deadlineAt' in playing.game, false);
   host.close();
   guest.close();
+});
+
+test('the clock runs out with nobody touching anything, twice in a row', async () => {
+  const { host, guest, started } = await startedRoom({ timed: true }, FAST_URL);
+  assert.equal(started.game.msBudget, FAST_BUDGET_MS);
+  await bothReady(host, guest);
+
+  // Nobody plays a card: the server's own timer has to end the run.
+  const lost = await guest.state((m) => m.game?.phase === 'lost');
+  assert.equal(lost.game.lostTo, 'time');
+  assert.equal(lost.game.msRemaining, null);
+  await host.state((m) => m.game?.phase === 'lost');
+
+  // And the room's timer re-arms for the next run rather than staying spent.
+  host.send({ type: 'playAgain' });
+  await host.state((m) => m.game === null);
+  host.send({ type: 'start', timed: true });
+  await host.state((m) => m.game);
+  await guest.state((m) => m.game);
+  await bothReady(host, guest);
+  const lostAgain = await host.state((m) => m.game?.phase === 'lost');
+  assert.equal(lostAgain.game.lostTo, 'time');
+  assert.equal(lostAgain.game.level, 1);
+
+  host.close();
+  guest.close();
+});
+
+test('the clock waits for a dropped player and resumes when they come back', async () => {
+  const { host, guest, code, guestId } = await startedRoom({ timed: true }, FAST_URL);
+  await bothReady(host, guest);
+
+  guest.close();
+  const paused = await host.state((m) => m.game?.clockPaused);
+  assert.ok(paused.game.msRemaining > 0);
+
+  // Sit out well past the deadline this level would have had, then come back.
+  await new Promise((r) => setTimeout(r, FAST_BUDGET_MS * 2));
+  const back = await Client.open(FAST_URL);
+  back.send({ type: 'join', code, name: 'Sam', playerId: guestId });
+
+  const resumed = await back.state((m) => m.game && !m.game.clockPaused);
+  assert.equal(resumed.game.phase, 'playing', 'the outage never counted against the clock');
+  assert.equal(
+    resumed.game.msRemaining,
+    paused.game.msRemaining,
+    'resumes with exactly the time it was holding',
+  );
+
+  // And it is a real clock again, not a frozen one.
+  const lost = await back.state((m) => m.game?.phase === 'lost');
+  assert.equal(lost.game.lostTo, 'time');
+
+  host.close();
+  back.close();
 });
 
 test('the app shell is served over http', async () => {

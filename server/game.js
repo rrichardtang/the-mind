@@ -42,7 +42,7 @@ function shuffledDeck() {
 }
 
 /** Start a fresh run. `playerIds` fixes the seating for the whole game. */
-export function createGame(playerIds, { timed = false } = {}) {
+export function createGame(playerIds, { timed = false, secondsPerCard = SECONDS_PER_CARD } = {}) {
   const game = {
     playerIds: [...playerIds],
     maxLevel: levelsFor(playerIds.length),
@@ -54,7 +54,12 @@ export function createGame(playerIds, { timed = false } = {}) {
     discarded: [], // cards lost to mistakes or shurikens
     phase: 'ready', // ready | playing | levelCleared | won | lost
     timed,
-    deadlineAt: null, // epoch ms while a level's clock runs, else null
+    msPerCard: secondsPerCard * 1000,
+    // A level's clock is either running (deadlineAt, epoch ms) or paused
+    // (msLeft), never both: armClock is the only thing that sets either.
+    deadlineAt: null,
+    msLeft: null,
+    paused: false, // true while a seated player is disconnected
     lostTo: null, // 'lives' | 'time', once the run is lost
     ready: [],
     starVotes: [],
@@ -78,13 +83,41 @@ function dealLevel(game) {
   game.starVotes = [];
   game.livesLostThisLevel = 0;
   game.phase = 'ready';
+  clearClock(game);
+}
+
+const levelBudget = (game) => game.msPerCard * game.playerIds.length * game.level;
+
+function clearClock(game) {
   game.deadlineAt = null;
+  game.msLeft = null;
+}
+
+/** Put `ms` on the clock, running or held, depending on the pause state. */
+function armClock(game, ms, now) {
+  game.deadlineAt = game.paused ? null : now + ms;
+  game.msLeft = game.paused ? ms : null;
+}
+
+const msRemaining = (game, now) =>
+  game.msLeft ?? (game.deadlineAt == null ? null : Math.max(0, game.deadlineAt - now));
+
+/**
+ * Freeze or resume the level's clock. A disconnected player's cards cannot be
+ * played by anyone, so a timed level would be unclearable through no fault of
+ * the table — the clock waits for them instead.
+ */
+export function setClockPaused(game, paused, now = Date.now()) {
+  if (!game.timed || game.paused === paused) return;
+  const left = msRemaining(game, now);
+  game.paused = paused;
+  if (left != null) armClock(game, left, now);
 }
 
 function loseRun(game, lostTo, text) {
   game.phase = 'lost';
   game.lostTo = lostTo;
-  game.deadlineAt = null;
+  clearClock(game);
   log(game, 'lost', text);
 }
 
@@ -97,14 +130,14 @@ const cardsLeft = (game) => game.playerIds.flatMap((id) => game.hands[id] ?? [])
 const lowestOutstanding = (game) => Math.min(...cardsLeft(game));
 
 /** Mark a player ready for the current level. Everyone ready -> level begins. */
-export function setReady(game, playerId, activeIds) {
+export function setReady(game, playerId, activeIds, now = Date.now()) {
   if (game.phase !== 'ready') return;
   if (!game.ready.includes(playerId)) game.ready.push(playerId);
   const allReady = activeIds.every((id) => game.ready.includes(id));
   if (allReady && activeIds.length > 0) {
     game.phase = 'playing';
     // The clock only starts once play does — the ready gate is untimed.
-    if (game.timed) game.deadlineAt = Date.now() + SECONDS_PER_CARD * 1000 * game.playerIds.length * game.level;
+    if (game.timed) armClock(game, levelBudget(game), now);
     log(game, 'level', `Level ${game.level} — concentrate.`);
   }
 }
@@ -188,7 +221,7 @@ function throwStar(game, nameOf) {
 function checkLevelEnd(game) {
   if (cardsLeft(game).length > 0) return;
 
-  game.deadlineAt = null;
+  clearClock(game);
 
   if (game.level >= game.maxLevel) {
     game.phase = 'won';
@@ -215,6 +248,7 @@ function checkLevelEnd(game) {
  * only ever fires on a timed level that is still being played.
  */
 export function checkTimeout(game, now) {
+  // A paused clock has no deadline, so it can never expire here.
   if (!game.timed || game.phase !== 'playing' || game.deadlineAt == null || now < game.deadlineAt) return;
   loseRun(game, 'time', 'The clock ran out. The run is over.');
 }
@@ -242,7 +276,11 @@ export function viewFor(game, playerId, players, now = Date.now()) {
     timed: game.timed,
     // Remaining time, not the deadline: the client counts down from when the
     // state lands, so a skewed phone clock can never desync the display.
-    msRemaining: game.deadlineAt == null ? null : Math.max(0, game.deadlineAt - now),
+    msRemaining: msRemaining(game, now),
+    // The level's full budget, so the client can shade the clock as a fraction
+    // of it rather than re-deriving the rule.
+    msBudget: game.timed ? levelBudget(game) : null,
+    clockPaused: game.paused,
     lostTo: game.lostTo,
     hand: game.hands[playerId] ?? [],
     pile: game.pile.map((p) => p.card),

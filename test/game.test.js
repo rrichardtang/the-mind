@@ -7,6 +7,7 @@ import {
   toggleStarVote,
   nextLevel,
   checkTimeout,
+  setClockPaused,
   viewFor,
   levelsFor,
   SECONDS_PER_CARD,
@@ -240,12 +241,12 @@ const timedGame = () => createGame(IDS, { timed: true });
 
 test('the clock only starts when the level does', () => {
   const g = timedGame();
-  setReady(g, 'a', IDS);
+  const now = 1_700_000_000_000;
+  setReady(g, 'a', IDS, now);
   assert.equal(g.deadlineAt, null, 'the ready gate is untimed');
-  setReady(g, 'b', IDS);
-  setReady(g, 'c', IDS);
-  const expected = Date.now() + SECONDS_PER_CARD * 1000 * IDS.length * g.level;
-  assert.ok(Math.abs(g.deadlineAt - expected) < 1000, '20s per card dealt this level');
+  setReady(g, 'b', IDS, now);
+  setReady(g, 'c', IDS, now);
+  assert.equal(g.deadlineAt, now + SECONDS_PER_CARD * 1000 * IDS.length * g.level, '20s per card dealt');
 });
 
 test('an untimed run never gets a deadline', () => {
@@ -316,6 +317,50 @@ test('a won run cannot then time out', () => {
   assert.equal(g.lostTo, null);
 });
 
+test('a disconnected player stops the clock, and reconnecting starts it again', () => {
+  const g = timedGame();
+  const start = 1_700_000_000_000;
+  IDS.forEach((id) => setReady(g, id, IDS, start));
+  const budget = g.deadlineAt - start;
+
+  setClockPaused(g, true, start + 10000);
+  assert.equal(g.deadlineAt, null, 'a paused clock has no deadline to expire');
+  assert.equal(g.msLeft, budget - 10000);
+
+  // However long the outage lasts, none of it comes off the clock.
+  checkTimeout(g, start + budget + 60000);
+  assert.equal(g.phase, 'playing');
+
+  setClockPaused(g, false, start + budget + 60000);
+  assert.equal(g.msLeft, null);
+  assert.equal(g.deadlineAt, start + 2 * budget + 50000, 'resumes with the time it had');
+
+  checkTimeout(g, g.deadlineAt);
+  assert.equal(g.lostTo, 'time');
+});
+
+test('dropping out during the ready gate holds the next clock too', () => {
+  const g = timedGame();
+  const start = 1_700_000_000_000;
+  setClockPaused(g, true, start);
+  IDS.filter((id) => id !== 'c').forEach((id) => setReady(g, id, ['a', 'b'], start));
+
+  assert.equal(g.phase, 'playing', 'the players still there can start the level');
+  assert.equal(g.deadlineAt, null);
+  assert.equal(g.msLeft, SECONDS_PER_CARD * 1000 * IDS.length * g.level, 'the full budget, held');
+
+  setClockPaused(g, false, start + 5000);
+  assert.equal(g.deadlineAt, start + 5000 + g.msPerCard * IDS.length);
+});
+
+test('pausing an untimed run does nothing at all', () => {
+  const g = createGame(IDS);
+  IDS.forEach((id) => setReady(g, id, IDS));
+  setClockPaused(g, true, Date.now());
+  assert.equal(g.paused, false);
+  assert.equal(g.msLeft, null);
+});
+
 test('the view sends time remaining, never the raw deadline', () => {
   const g = timedGame();
   IDS.forEach((id) => setReady(g, id, IDS));
@@ -327,5 +372,26 @@ test('the view sends time remaining, never the raw deadline', () => {
   assert.equal('deadlineAt' in view, false);
 
   assert.equal(viewFor(g, 'a', players, g.deadlineAt + 5000).msRemaining, 0, 'clamped at zero');
-  assert.equal(viewFor(createGame(IDS), 'a', players).msRemaining, null);
+  assert.equal(view.msBudget, SECONDS_PER_CARD * 1000 * IDS.length * g.level);
+
+  const untimed = viewFor(createGame(IDS), 'a', players);
+  assert.equal(untimed.msRemaining, null);
+  assert.equal(untimed.msBudget, null);
+});
+
+test('a paused view freezes the remaining time and says so', () => {
+  const g = timedGame();
+  IDS.forEach((id) => setReady(g, id, IDS));
+  const players = new Map(IDS.map((id) => [id, { id, name: nameOf(id), connected: true }]));
+  setClockPaused(g, true, g.deadlineAt - 12000);
+
+  const view = viewFor(g, 'a', players, Date.now() + 60000);
+  assert.equal(view.clockPaused, true);
+  assert.equal(view.msRemaining, 12000, 'frozen, however long the wall clock runs on');
+});
+
+test('a shortened clock is what the tests run against', () => {
+  const g = createGame(IDS, { timed: true, secondsPerCard: 0.2 });
+  IDS.forEach((id) => setReady(g, id, IDS));
+  assert.equal(g.deadlineAt - Date.now() <= 600, true, '0.2s per card, 3 cards');
 });

@@ -286,6 +286,10 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
   font-weight: 650;
   color: var(--text-dim);
 }
+.hud-timer.paused {
+  color: var(--text-faint);
+  border-style: dashed;
+}
 .hud-timer.urgent {
   color: var(--bad);
   border-color: var(--bad);

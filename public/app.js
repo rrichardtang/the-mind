@@ -209,22 +209,35 @@
    */
   let timerEndsAt = null;
   let timerInterval = null;
+  let urgentBelow = 0;
 
   function renderTimer(g) {
     const running = g.timed && g.msRemaining != null;
     $('hud-timer').hidden = !running;
     if (!running) { stopTimer(); return; }
     timerEndsAt = performance.now() + g.msRemaining;
+    // A quarter of this level's own budget, so the alarm reads the same on a
+    // 40 second level as on a four minute one. The server sends the budget;
+    // the client never works out what a level is worth.
+    urgentBelow = g.msBudget / 4;
+
+    // Someone is offline: their cards are unplayable, so the server holds the
+    // clock. Show it stopped rather than counting down against nobody.
+    if (g.clockPaused) { stopTimer(); paintTimer(g.msRemaining, true); return; }
     tickTimer();
     timerInterval ??= setInterval(tickTimer, 250);
   }
 
   function tickTimer() {
-    const left = Math.max(0, timerEndsAt - performance.now());
+    paintTimer(Math.max(0, timerEndsAt - performance.now()), false);
+  }
+
+  function paintTimer(left, paused) {
     const secs = Math.ceil(left / 1000);
     const node = $('hud-timer');
-    node.textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
-    node.classList.toggle('urgent', left <= 30000);
+    node.textContent = `${paused ? '⏸ ' : ''}${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+    node.classList.toggle('paused', paused);
+    node.classList.toggle('urgent', !paused && left <= urgentBelow);
   }
 
   function stopTimer() {

@@ -58,7 +58,7 @@ one pile in **ascending order — without communicating**. No talking, no gestur
 - Clearing certain levels earns a bonus life or shuriken.
 - **Timed levels** are optional — the host ticks the box in the lobby before starting. Each level
   then gives you 20 seconds per card dealt (`20 × players × level`), and letting the clock reach
-  zero ends the whole run, not just a life.
+  zero ends the whole run, not just a life. The clock stops while anyone is disconnected.
 - Lives hit zero and the run ends. Clear the last level and you've beaten The Mind.
 
 Your hand is always sorted ascending. Your **lowest card fills most of the screen** — tap it to
@@ -90,7 +90,9 @@ seconds-per-card lives beside it as `SECONDS_PER_CARD`, likewise the only place 
 
 - **Dropped connection.** Your seat and hand are held open; reopening the page rejoins the same
   room automatically. Mid-game a disconnected player keeps their seat, so the game can carry on
-  when someone's phone locks.
+  when someone's phone locks. On a timed run the clock pauses while they are away — their cards
+  are unplayable by anyone else, so the level would otherwise be unwinnable — and resumes with
+  the time it had once everyone is back.
 - **Removing a player.** In the lobby the host gets a ✕ beside everyone else; tapping it sends
   that player back to the home screen and frees the seat. It only works before the game starts —
   once hands are dealt, everyone in the run is needed to finish the level.

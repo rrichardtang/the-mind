@@ -12,16 +12,21 @@ import {
   toggleStarVote,
   nextLevel,
   checkTimeout,
+  setClockPaused,
   viewFor,
   levelsFor,
   MIN_PLAYERS,
   MAX_PLAYERS,
+  SECONDS_PER_CARD,
 } from './game.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const PORT = process.env.PORT || 3000;
 const ROOM_TTL_MS = 6 * 60 * 60 * 1000; // rooms are dropped 6h after last activity
+// Only the tests ever want a shorter clock, so it stays an env knob rather
+// than something a client can ask for over the wire.
+const LEVEL_SECONDS_PER_CARD = Number(process.env.MIND_SECONDS_PER_CARD) || SECONDS_PER_CARD;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -81,7 +86,7 @@ const send = (ws, msg) => {
 };
 const fail = (ws, message) => send(ws, { type: 'error', message });
 
-function roomState(room, playerId) {
+function roomState(room, playerId, now) {
   const player = room.players.get(playerId);
   return {
     type: 'state',
@@ -96,7 +101,7 @@ function roomState(room, playerId) {
       isHost: p.id === room.hostId,
     })),
     plannedLevels: levelsFor(room.players.size),
-    game: room.game ? viewFor(room.game, playerId, room.players) : null,
+    game: room.game ? viewFor(room.game, playerId, room.players, now) : null,
   };
 }
 
@@ -105,7 +110,7 @@ function roomState(room, playerId) {
  * change. Nobody has to touch anything for a level to time out, so a real
  * setTimeout is the only thing that can end it.
  */
-function syncTimer(room) {
+function syncTimer(room, now) {
   clearTimeout(room.timerId);
   room.timerId = null;
   const game = room.game;
@@ -113,7 +118,19 @@ function syncTimer(room) {
   room.timerId = setTimeout(() => {
     checkTimeout(game, Date.now());
     broadcast(room);
-  }, Math.max(0, game.deadlineAt - Date.now()));
+  }, Math.max(0, game.deadlineAt - now));
+}
+
+/**
+ * A disconnected player's cards cannot be played by anyone, so a timed level
+ * would be unclearable through no fault of the table: hold the clock until
+ * every seat is back. Driven from broadcast(), which every connection change
+ * already funnels through.
+ */
+function syncClockPause(room, now) {
+  if (!room.game) return;
+  const waiting = room.game.playerIds.some((id) => !room.players.get(id)?.connected);
+  setClockPaused(room.game, waiting, now);
 }
 
 /** Drop a room for good, timer and all, so nothing fires against a dead room. */
@@ -123,10 +140,14 @@ function deleteRoom(room) {
 }
 
 function broadcast(room) {
-  room.updatedAt = Date.now();
-  syncTimer(room);
+  // One reading of the clock for the whole broadcast, so a level's remaining
+  // time cannot shift by a millisecond between deciding it and sending it.
+  const now = Date.now();
+  room.updatedAt = now;
+  syncClockPause(room, now);
+  syncTimer(room, now);
   for (const p of room.players.values()) {
-    if (p.connected) send(p.ws, roomState(room, p.id));
+    if (p.connected) send(p.ws, roomState(room, p.id, now));
   }
 }
 
@@ -138,7 +159,7 @@ const nameOfIn = (room) => (id) => room.players.get(id)?.name ?? 'Player';
  */
 function endGame(room) {
   room.game = null;
-  syncTimer(room); // not every caller broadcasts afterwards, so disarm here too
+  syncTimer(room, Date.now()); // handleJoin can bail out on a full room without broadcasting
   for (const p of room.players.values()) if (!p.connected) room.players.delete(p.id);
   if (!room.players.has(room.hostId)) room.hostId = room.players.keys().next().value ?? null;
 }
@@ -253,6 +274,10 @@ function requireGame(ws, ctx) {
     fail(ws, 'No game in progress.');
     return null;
   }
+  // A frame that arrives after the deadline must not beat the timer callback to
+  // the game: settle the clock first, and every action falls through to the
+  // phase check below.
+  checkTimeout(room.game, Date.now());
   return room;
 }
 
@@ -269,7 +294,10 @@ function handleMessage(ws, ctx, msg) {
       if (room.hostId !== ctx.playerId) return fail(ws, 'Only the host can start the game.');
       if (room.game) return fail(ws, 'The game has already started.');
       if (room.players.size < MIN_PLAYERS) return fail(ws, `You need at least ${MIN_PLAYERS} players.`);
-      room.game = createGame([...room.players.keys()], { timed: msg.timed === true });
+      room.game = createGame([...room.players.keys()], {
+        timed: msg.timed === true,
+        secondsPerCard: LEVEL_SECONDS_PER_CARD,
+      });
       return broadcast(room);
     }
 
