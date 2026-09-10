@@ -61,7 +61,7 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
-/** code -> { code, hostId, players: Map, game, updatedAt } */
+/** code -> { code, hostId, players: Map, removed: Set, game, updatedAt } */
 const rooms = new Map();
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no look-alike glyphs
@@ -109,7 +109,15 @@ function broadcast(room) {
 const nameOfIn = (room) => (id) => room.players.get(id)?.name ?? 'Player';
 
 function handleCreate(ws, ctx, msg) {
-  const room = { code: newRoomCode(), hostId: null, players: new Map(), game: null, updatedAt: Date.now() };
+  leaveCurrentRoom(ws, ctx);
+  const room = {
+    code: newRoomCode(),
+    hostId: null,
+    players: new Map(),
+    removed: new Set(), // playerIds the host evicted, so they cannot auto-rejoin
+    game: null,
+    updatedAt: Date.now(),
+  };
   rooms.set(room.code, room);
   joinRoom(ws, ctx, room, cleanName(msg.name), crypto.randomUUID());
 }
@@ -118,16 +126,26 @@ function handleJoin(ws, ctx, msg) {
   const code = String(msg.code ?? '').trim().toUpperCase();
   const room = rooms.get(code);
   if (!room) return fail(ws, `No room called ${code || '—'}.`);
+  if (msg.playerId && room.removed.has(msg.playerId)) return fail(ws, 'The host removed you from that room.');
+
+  // An impatient second tap on Join is the same person, not a new one. If this
+  // socket already holds a seat here, hand that seat straight back instead of
+  // dealing out another player.
+  const held = ctx.room === room ? room.players.get(ctx.playerId) : null;
+  if (held && held.ws === ws) return joinRoom(ws, ctx, room, held.name, held.id);
 
   // Reconnect path: a known playerId reclaims its seat, hand and all.
   const existing = msg.playerId && room.players.get(msg.playerId);
   if (existing) {
     if (existing.connected && existing.ws !== ws) existing.ws?.close(4000, 'Reconnected elsewhere');
+    leaveCurrentRoom(ws, ctx);
     return joinRoom(ws, ctx, room, existing.name, existing.id);
   }
 
   if (room.game) return fail(ws, 'That game is already in progress.');
   if (room.players.size >= MAX_PLAYERS) return fail(ws, `That room is full (${MAX_PLAYERS} players).`);
+  // One socket only ever owns one seat, so a join from elsewhere gives up the old one.
+  leaveCurrentRoom(ws, ctx);
   joinRoom(ws, ctx, room, cleanName(msg.name), crypto.randomUUID());
 }
 
@@ -143,6 +161,46 @@ function joinRoom(ws, ctx, room, name, playerId) {
   ctx.playerId = playerId;
   send(ws, { type: 'joined', code: room.code, playerId });
   broadcast(room);
+}
+
+/**
+ * Give up a seat. Before the game starts the seat is freed outright; mid-game it
+ * is held open so a dropped phone can come back to the same hand.
+ */
+function dropSeat(room, playerId) {
+  const player = room.players.get(playerId);
+  if (!player) return;
+  player.connected = false;
+  player.ws = null;
+  if (!room.game) {
+    room.players.delete(playerId);
+    if (room.hostId === playerId) room.hostId = room.players.keys().next().value ?? null;
+  }
+  if (room.players.size === 0) rooms.delete(room.code);
+  else broadcast(room);
+}
+
+/** Release whatever seat this socket is holding, if it is still the owner. */
+function leaveCurrentRoom(ws, ctx) {
+  const { room, playerId } = ctx;
+  ctx.room = null;
+  ctx.playerId = null;
+  if (!room || !playerId) return;
+  if (room.players.get(playerId)?.ws !== ws) return; // superseded by a reconnect
+  dropSeat(room, playerId);
+}
+
+/** Host eviction: the seat goes for good, and the player is told why. */
+function evictPlayer(room, player) {
+  const ws = player.ws;
+  room.players.delete(player.id);
+  room.removed.add(player.id);
+  player.connected = false;
+  player.ws = null;
+  if (ws) {
+    send(ws, { type: 'removed', message: 'The host removed you from the room.' });
+    ws.close(4001, 'Removed by host');
+  }
 }
 
 function requireGame(ws, ctx) {
@@ -205,6 +263,18 @@ function handleMessage(ws, ctx, msg) {
       return broadcast(room);
     }
 
+    case 'removePlayer': {
+      const room = ctx.room;
+      if (!room) return fail(ws, 'You are not in a room.');
+      if (room.hostId !== ctx.playerId) return fail(ws, 'Only the host can remove players.');
+      if (room.game) return fail(ws, 'You can only remove players before the game starts.');
+      const target = room.players.get(String(msg.playerId ?? ''));
+      if (!target) return fail(ws, 'That player is no longer in the room.');
+      if (target.id === ctx.playerId) return fail(ws, "You can't remove yourself — leave the room instead.");
+      evictPlayer(room, target);
+      return broadcast(room);
+    }
+
     case 'playAgain': {
       const room = ctx.room;
       if (!room) return fail(ws, 'You are not in a room.');
@@ -246,18 +316,8 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     const { room, playerId } = ctx;
     if (!room || !playerId) return;
-    const player = room.players.get(playerId);
-    if (!player || player.ws !== ws) return; // superseded by a reconnect
-    player.connected = false;
-    player.ws = null;
-    // Before the game starts a disconnect gives up the seat; mid-game the seat
-    // is held open so a dropped phone can rejoin with the same hand.
-    if (!room.game) {
-      room.players.delete(playerId);
-      if (room.hostId === playerId) room.hostId = room.players.keys().next().value ?? null;
-    }
-    if (room.players.size === 0) rooms.delete(room.code);
-    else broadcast(room);
+    if (room.players.get(playerId)?.ws !== ws) return; // superseded by a reconnect
+    dropSeat(room, playerId);
   });
 });
 

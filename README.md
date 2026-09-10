@@ -87,6 +87,9 @@ shurikens. If your copy's level cards differ, edit the `REWARDS` table at the to
 - **Dropped connection.** Your seat and hand are held open; reopening the page rejoins the same
   room automatically. Mid-game a disconnected player keeps their seat, so the game can carry on
   when someone's phone locks.
+- **Removing a player.** In the lobby the host gets a ✕ beside everyone else; tapping it sends
+  that player back to the home screen and frees the seat. It only works before the game starts —
+  once hands are dealt, everyone in the run is needed to finish the level.
 - **Rooms** are in-memory and disappear when the server restarts, plus 6 hours after the last
   player leaves. Nothing is persisted, and there are no accounts.
 - **Add to Home Screen** on iOS or Android for a full-screen, app-like game.

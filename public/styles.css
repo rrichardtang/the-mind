@@ -229,6 +229,27 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
   border-radius: 999px;
   padding: 3px 8px;
 }
+.remove-btn {
+  appearance: none;
+  flex: none;
+  width: 30px; height: 30px;
+  margin: -4px -4px -4px 0; /* keeps the row height while widening the tap target */
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+}
+.remove-btn:active { transform: scale(0.9); color: var(--bad); border-color: var(--bad); }
+@media (hover: hover) {
+  .remove-btn:hover { color: var(--bad); border-color: var(--bad); }
+}
+
 .lobby-foot { display: grid; gap: 8px; justify-items: center; }
 .lobby-foot .btn { width: 100%; }
 
