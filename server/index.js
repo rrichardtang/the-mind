@@ -298,16 +298,48 @@ function onStartupError(err) {
 server.on('error', onStartupError);
 wss.on('error', onStartupError);
 
-server.listen(PORT, () => {
-  // Phones can't use localhost, so print the LAN addresses they should open.
-  const lan = Object.values(os.networkInterfaces())
-    .flat()
-    .filter((i) => i && i.family === 'IPv4' && !i.internal)
-    .map((i) => i.address);
+/**
+ * Where to tell people to point their phones. On a host the machine's own
+ * address is an internal container IP that nobody can reach, so LAN advice
+ * there is worse than useless — say what's actually true instead.
+ */
+function startupBanner() {
+  const lines = ['', '  The Mind is running.', ''];
 
-  console.log(`\n  The Mind is running.\n`);
-  console.log(`  This device:   http://localhost:${PORT}`);
-  for (const address of lan) console.log(`  Phones:        http://${address}:${PORT}`);
-  if (!lan.length) console.log('  No LAN address found — other devices may not be able to reach this.');
-  console.log(`\n  Everyone opens the same URL, on the same wifi. Ctrl+C to stop.\n`);
-});
+  // Railway, Render and Fly each publish the service's real hostname.
+  const publicHost =
+    process.env.RAILWAY_PUBLIC_DOMAIN ||
+    process.env.RENDER_EXTERNAL_HOSTNAME ||
+    (process.env.FLY_APP_NAME && `${process.env.FLY_APP_NAME}.fly.dev`);
+  const hosted =
+    publicHost ||
+    process.env.RAILWAY_ENVIRONMENT ||
+    process.env.RENDER ||
+    process.env.FLY_APP_NAME;
+
+  if (publicHost) {
+    lines.push(`  Everyone opens:  https://${publicHost}`, '', '  Listening on port ' + PORT + '.');
+  } else if (hosted) {
+    lines.push(
+      `  Listening on port ${PORT}.`,
+      '',
+      '  No public domain yet — generate one in your host\'s networking',
+      '  settings, then open that URL on every phone.',
+    );
+  } else {
+    // Local: phones can't use localhost, so print the LAN addresses.
+    const lan = Object.values(os.networkInterfaces())
+      .flat()
+      .filter((i) => i && i.family === 'IPv4' && !i.internal)
+      .map((i) => i.address);
+
+    lines.push(`  This device:   http://localhost:${PORT}`);
+    for (const address of lan) lines.push(`  Phones:        http://${address}:${PORT}`);
+    if (!lan.length) lines.push('  No LAN address found — other devices may not be able to reach this.');
+    lines.push('', '  Everyone opens the same URL, on the same wifi. Ctrl+C to stop.');
+  }
+
+  return lines.concat('').join('\n');
+}
+
+server.listen(PORT, () => console.log(startupBanner()));

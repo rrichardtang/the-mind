@@ -294,3 +294,47 @@ test('the healthcheck endpoint reports liveness', async () => {
   // page instead of the server.
   assert.equal(typeof body.uptime, 'number');
 });
+
+/** Boot the server with the given env and capture its startup banner. */
+function bannerWith(env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['server/index.js'], {
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let out = '';
+    child.stdout.on('data', (c) => {
+      out += c;
+      if (out.includes('The Mind is running')) {
+        child.kill();
+        resolve(out);
+      }
+    });
+    child.on('error', reject);
+    setTimeout(() => { child.kill(); reject(new Error('no banner')); }, 5000);
+  });
+}
+
+test('a hosted deploy shows its public URL, not an unreachable container IP', async () => {
+  const out = await bannerWith({
+    PORT: '8081',
+    RAILWAY_ENVIRONMENT: 'production',
+    RAILWAY_PUBLIC_DOMAIN: 'the-mind-production.up.railway.app',
+  });
+  assert.match(out, /https:\/\/the-mind-production\.up\.railway\.app/);
+  // LAN advice is actively misleading on a host: the address is internal.
+  assert.equal(/same wifi/.test(out), false);
+  assert.equal(/Phones:\s+http:\/\/\d/.test(out), false);
+});
+
+test('a hosted deploy without a domain says how to get one', async () => {
+  const out = await bannerWith({ PORT: '8082', RAILWAY_ENVIRONMENT: 'production' });
+  assert.match(out, /No public domain yet/);
+  assert.equal(/same wifi/.test(out), false);
+});
+
+test('running locally still prints LAN addresses for phones', async () => {
+  const out = await bannerWith({ PORT: '8083' });
+  assert.match(out, /http:\/\/localhost:8083/);
+  assert.match(out, /same wifi/);
+});
