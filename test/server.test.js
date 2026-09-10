@@ -273,6 +273,64 @@ test('a game in progress cannot be joined by a newcomer', async () => {
   host.close(); guest.close(); late.close();
 });
 
+test('rejoining after a finished run starts from a clean lobby', async () => {
+  const host = await Client.open();
+  const guest = await Client.open();
+  host.send({ type: 'create', name: 'Richard' });
+  const { code } = await host.next((m) => m.type === 'joined');
+  guest.send({ type: 'join', code, name: 'Sam' });
+  const guestJoin = await guest.next((m) => m.type === 'joined');
+  await host.state((m) => m.lobby.length === 2);
+  host.send({ type: 'start' });
+
+  // Burn both lives: on each level the player holding the higher card plays
+  // first, which is always a mistake.
+  for (const level of [1, 2]) {
+    const hs = await host.state((m) => m.game?.level === level && m.game.phase === 'ready');
+    const gs = await guest.state((m) => m.game?.level === level && m.game.phase === 'ready');
+    host.send({ type: 'ready' });
+    guest.send({ type: 'ready' });
+    await host.state((m) => m.game?.phase === 'playing');
+    await guest.state((m) => m.game?.phase === 'playing');
+
+    const hostHigh = hs.game.hand[0] > gs.game.hand[0];
+    (hostHigh ? host : guest).send({ type: 'play', card: hostHigh ? hs.game.hand[0] : gs.game.hand[0] });
+    if (level === 1) {
+      await host.state((m) => m.game?.phase === 'levelCleared');
+      host.send({ type: 'nextLevel' });
+    }
+  }
+
+  const over = await host.state((m) => m.game?.phase === 'lost');
+  assert.equal(over.game.lives, 0);
+
+  // Everyone walks away and comes back to the same room code.
+  host.close();
+  guest.close();
+  const back = await Client.open();
+  back.send({ type: 'join', code, name: 'Sam', playerId: guestJoin.playerId });
+  await back.next((m) => m.type === 'joined');
+
+  const lobby = await back.state();
+  assert.equal(lobby.game, null, 'the finished run does not follow you back in');
+  assert.deepEqual(lobby.lobby.map((p) => p.name), ['Sam'], 'no ghosts from the last run');
+  assert.equal(lobby.you.isHost, true);
+
+  // And the next run starts on full lives and one shuriken.
+  const second = await Client.open();
+  second.send({ type: 'join', code, name: 'Pat' });
+  await second.next((m) => m.type === 'joined');
+  await back.state((m) => m.lobby.length === 2);
+  back.send({ type: 'start' });
+  const fresh = await back.state((m) => m.game);
+  assert.equal(fresh.game.lives, 2);
+  assert.equal(fresh.game.shurikens, 1);
+  assert.equal(fresh.game.level, 1);
+
+  back.close();
+  second.close();
+});
+
 test('tapping join twice does not seat the same player twice', async () => {
   const host = await Client.open();
   const guest = await Client.open();

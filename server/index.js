@@ -108,6 +108,16 @@ function broadcast(room) {
 
 const nameOfIn = (room) => (id) => room.players.get(id)?.name ?? 'Player';
 
+/**
+ * Tear the game down and return the room to a lobby. Seats are only held open
+ * for the sake of a game in progress, so the ones nobody is sitting in go too.
+ */
+function endGame(room) {
+  room.game = null;
+  for (const p of room.players.values()) if (!p.connected) room.players.delete(p.id);
+  if (!room.players.has(room.hostId)) room.hostId = room.players.keys().next().value ?? null;
+}
+
 function handleCreate(ws, ctx, msg) {
   leaveCurrentRoom(ws, ctx);
   const room = {
@@ -127,6 +137,10 @@ function handleJoin(ws, ctx, msg) {
   const room = rooms.get(code);
   if (!room) return fail(ws, `No room called ${code || '—'}.`);
   if (msg.playerId && room.removed.has(msg.playerId)) return fail(ws, 'The host removed you from that room.');
+
+  // A finished run is finished: the room drops back to the lobby as soon as
+  // anyone joins, so nobody walks into the old game's lives and shurikens.
+  if (room.game && (room.game.phase === 'won' || room.game.phase === 'lost')) endGame(room);
 
   // An impatient second tap on Join is the same person, not a new one. If this
   // socket already holds a seat here, hand that seat straight back instead of
@@ -279,7 +293,7 @@ function handleMessage(ws, ctx, msg) {
       const room = ctx.room;
       if (!room) return fail(ws, 'You are not in a room.');
       if (room.hostId !== ctx.playerId) return fail(ws, 'Only the host can start a new run.');
-      room.game = null;
+      endGame(room);
       return broadcast(room);
     }
 
