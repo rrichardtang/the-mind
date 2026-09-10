@@ -23,6 +23,7 @@
   let heroValue = null;   // card on the hero now, so we only animate real changes
   let lastLives = null;
   let lastLogId = 0;
+  let entering = false;   // a create/join is in flight, so the buttons stay locked
 
   /* ── Connection ─────────────────────────────────────── */
 
@@ -64,14 +65,20 @@
   function handle(msg) {
     if (msg.type === 'joined') {
       intent = null;
+      setEntering(false);
       store.set('code', msg.code);
       store.set('playerId', msg.playerId);
       return;
     }
+    if (msg.type === 'removed') {
+      goHome(msg.message || 'The host removed you from the room.');
+      return;
+    }
     if (msg.type === 'error') {
+      setEntering(false);
       toast(msg.message);
       // A stale saved room shouldn't trap us on a reconnect loop.
-      if (/No room called|already in progress|is full/i.test(msg.message)) {
+      if (/No room called|already in progress|is full|removed you/i.test(msg.message)) {
         store.del('code'); store.del('playerId');
         intent = null;
         show('home');
@@ -97,6 +104,37 @@
     toastTimer = setTimeout(() => { node.hidden = true; }, 3200);
   }
 
+  let enteringTimer;
+  /**
+   * Lock the home-screen buttons while a create/join is in flight. Without this
+   * an impatient second tap asks the server for a second seat, and you end up
+   * in the lobby twice.
+   */
+  function setEntering(on) {
+    entering = on;
+    clearTimeout(enteringTimer);
+    $('btn-create').disabled = on;
+    $('btn-join').disabled = on;
+    $('btn-create').textContent = on ? 'Creating…' : 'Create a room';
+    $('btn-join').textContent = on ? 'Joining…' : 'Join';
+    // Never leave the buttons stuck if the server never answers.
+    if (on) enteringTimer = setTimeout(() => setEntering(false), 8000);
+  }
+
+  /** Drop the room we were in and go back to the start, optionally saying why. */
+  function goHome(message) {
+    store.del('code');
+    store.del('playerId');
+    intent = null;
+    state = null;
+    setEntering(false);
+    const socket = ws;
+    ws = null;
+    socket?.close();
+    show('home');
+    if (message) toast(message);
+  }
+
   const buzz = (ms) => { try { navigator.vibrate?.(ms); } catch { /* unsupported */ } };
   const initials = (name) => (name || '?').trim().slice(0, 2).toUpperCase();
 
@@ -119,6 +157,14 @@
       li.append(el('span', 'avatar', initials(p.name)), el('span', 'player-name', p.name));
       if (p.isHost) li.append(el('span', 'tag', 'Host'));
       if (p.id === state.you.id) li.append(el('span', 'tag', 'You'));
+      if (state.you.isHost && p.id !== state.you.id) {
+        const remove = el('button', 'remove-btn', '✕');
+        remove.type = 'button';
+        remove.title = `Remove ${p.name}`;
+        remove.setAttribute('aria-label', `Remove ${p.name}`);
+        remove.addEventListener('click', () => send({ type: 'removePlayer', playerId: p.id }));
+        li.append(remove);
+      }
       list.append(li);
     }
 
@@ -365,16 +411,24 @@
   }
 
   $('btn-create').addEventListener('click', () => {
+    if (entering) return;
     const name = currentName();
-    if (name) send({ type: 'create', name });
+    if (!name) return;
+    setEntering(true);
+    send({ type: 'create', name });
   });
 
   function doJoin() {
+    if (entering) return;
     const name = currentName();
     if (!name) return;
     const code = codeInput.value.trim().toUpperCase();
     if (code.length !== 4) { toast('Room codes are 4 characters.'); codeInput.focus(); return; }
-    send({ type: 'join', code, name });
+    setEntering(true);
+    // If this is the room we were already in, claim the seat we already have
+    // rather than asking for a new one.
+    const savedId = store.get('code') === code ? store.get('playerId') : null;
+    send(savedId ? { type: 'join', code, name, playerId: savedId } : { type: 'join', code, name });
   }
   $('btn-join').addEventListener('click', doJoin);
   codeInput.addEventListener('input', () => {
@@ -397,14 +451,7 @@
   $('btn-ready').addEventListener('click', () => send({ type: 'ready' }));
   $('btn-star').addEventListener('click', () => send({ type: 'star' }));
 
-  $('btn-leave-lobby').addEventListener('click', () => {
-    store.del('code'); store.del('playerId');
-    intent = null;
-    state = null;
-    ws?.close();
-    ws = null;
-    show('home');
-  });
+  $('btn-leave-lobby').addEventListener('click', () => goHome());
 
   const rules = $('overlay-rules');
   $('btn-rules-home').addEventListener('click', () => { rules.hidden = false; });

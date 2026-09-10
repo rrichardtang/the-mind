@@ -273,6 +273,102 @@ test('a game in progress cannot be joined by a newcomer', async () => {
   host.close(); guest.close(); late.close();
 });
 
+test('tapping join twice does not seat the same player twice', async () => {
+  const host = await Client.open();
+  const guest = await Client.open();
+  host.send({ type: 'create', name: 'Richard' });
+  const { code } = await host.next((m) => m.type === 'joined');
+
+  // Back-to-back joins on one socket, as an impatient thumb produces.
+  guest.send({ type: 'join', code, name: 'Sam' });
+  guest.send({ type: 'join', code, name: 'Sam' });
+  guest.send({ type: 'join', code, name: 'Sam' });
+
+  const first = await guest.next((m) => m.type === 'joined');
+  const third = await guest.next((m) => m.type === 'joined' && m !== first);
+  assert.equal(third.playerId, first.playerId, 'every join returns the same seat');
+
+  const lobby = await host.state((m) => m.lobby.length === 2);
+  assert.deepEqual(lobby.lobby.map((p) => p.name), ['Richard', 'Sam']);
+
+  // And the room settles at two players rather than filling up behind us.
+  host.send({ type: 'start' });
+  const started = await host.state((m) => m.game);
+  assert.equal(started.game.seats.length, 2);
+
+  host.close();
+  guest.close();
+});
+
+test('creating a room twice on one socket leaves no phantom behind', async () => {
+  const c = await Client.open();
+  c.send({ type: 'create', name: 'Richard' });
+  const first = await c.next((m) => m.type === 'joined');
+  c.send({ type: 'create', name: 'Richard' });
+  const second = await c.next((m) => m.type === 'joined' && m.code !== first.code);
+
+  const state = await c.state((m) => m.code === second.code);
+  assert.equal(state.lobby.length, 1);
+
+  // The abandoned room had one player, so it is gone entirely.
+  const other = await Client.open();
+  other.send({ type: 'join', code: first.code, name: 'Sam' });
+  assert.match((await other.next((m) => m.type === 'error')).message, /No room called/);
+
+  c.close();
+  other.close();
+});
+
+test('the host can remove a player from the lobby', async () => {
+  const host = await Client.open();
+  const guest = await Client.open();
+  host.send({ type: 'create', name: 'Richard' });
+  const { code } = await host.next((m) => m.type === 'joined');
+  guest.send({ type: 'join', code, name: 'Sam' });
+  const guestJoin = await guest.next((m) => m.type === 'joined');
+  await host.state((m) => m.lobby.length === 2);
+
+  host.send({ type: 'removePlayer', playerId: guestJoin.playerId });
+
+  const told = await guest.next((m) => m.type === 'removed');
+  assert.match(told.message, /removed you/i);
+  const after = await host.state((m) => m.lobby.length === 1);
+  assert.deepEqual(after.lobby.map((p) => p.name), ['Richard']);
+
+  // The evicted seat cannot be reclaimed by the auto-rejoin.
+  const back = await Client.open();
+  back.send({ type: 'join', code, name: 'Sam', playerId: guestJoin.playerId });
+  assert.match((await back.next((m) => m.type === 'error')).message, /removed you/i);
+
+  host.close();
+  guest.close();
+  back.close();
+});
+
+test('only the host removes players, and never mid-game or themselves', async () => {
+  const host = await Client.open();
+  const guest = await Client.open();
+  host.send({ type: 'create', name: 'Richard' });
+  const hostJoin = await host.next((m) => m.type === 'joined');
+  guest.send({ type: 'join', code: hostJoin.code, name: 'Sam' });
+  const guestJoin = await guest.next((m) => m.type === 'joined');
+  await host.state((m) => m.lobby.length === 2);
+
+  guest.send({ type: 'removePlayer', playerId: hostJoin.playerId });
+  assert.match((await guest.next((m) => m.type === 'error')).message, /Only the host/);
+
+  host.send({ type: 'removePlayer', playerId: hostJoin.playerId });
+  assert.match((await host.next((m) => m.type === 'error')).message, /remove yourself/);
+
+  host.send({ type: 'start' });
+  await host.state((m) => m.game);
+  host.send({ type: 'removePlayer', playerId: guestJoin.playerId });
+  assert.match((await host.next((m) => m.type === 'error')).message, /before the game starts/);
+
+  host.close();
+  guest.close();
+});
+
 test('the app shell is served over http', async () => {
   const res = await fetch(`http://127.0.0.1:${PORT}/`);
   assert.equal(res.status, 200);
