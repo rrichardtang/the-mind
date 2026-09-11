@@ -109,8 +109,23 @@ different clock for real games.
 server/game.js    rules engine — pure logic, no I/O
 server/index.js   static hosting, rooms, WebSocket protocol
 public/           the client (no build step, no framework)
+public/fonts/     Geist + Geist Mono, self-hosted
 test/             engine unit tests + end-to-end WebSocket tests
 ```
+
+Everything the client needs ships with it: no CDN, no runtime fetches, nothing to install.
+The visual system is documented in the header comment of
+[`public/styles.css`](public/styles.css): Geist for words and Geist Mono for every number,
+one accent colour, and a radius scale that tracks the size of the surface.
+
+### Vendored assets
+
+| What | Where from | Licence |
+| ---- | ---------- | ------- |
+| Geist, Geist Mono | [`geist`](https://vercel.com/font) on npm | SIL OFL 1.1 ([copy](public/fonts/LICENSE.txt)) |
+| Icons | [Phosphor](https://phosphoricons.com), inlined as a sprite in `index.html` | MIT |
+
+Both are copied in rather than depended on, so `ws` stays the only runtime dependency.
 
 The rules live entirely on the server. Clients render whatever state they're sent and are told
 only their own hand — every other player is just a card count.

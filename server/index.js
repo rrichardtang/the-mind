@@ -35,6 +35,7 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
+  '.woff2': 'font/woff2',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
   '.webmanifest': 'application/manifest+json',
@@ -187,7 +188,7 @@ function handleCreate(ws, ctx, msg) {
 function handleJoin(ws, ctx, msg) {
   const code = String(msg.code ?? '').trim().toUpperCase();
   const room = rooms.get(code);
-  if (!room) return fail(ws, `No room called ${code || '—'}.`);
+  if (!room) return fail(ws, `No room called ${code || '????'}.`);
   if (msg.playerId && room.removed.has(msg.playerId)) return fail(ws, 'The host removed you from that room.');
 
   // A finished run is finished: the room drops back to the lobby as soon as
@@ -343,7 +344,7 @@ function handleMessage(ws, ctx, msg) {
       if (room.game) return fail(ws, 'You can only remove players before the game starts.');
       const target = room.players.get(String(msg.playerId ?? ''));
       if (!target) return fail(ws, 'That player is no longer in the room.');
-      if (target.id === ctx.playerId) return fail(ws, "You can't remove yourself — leave the room instead.");
+      if (target.id === ctx.playerId) return fail(ws, "You can't remove yourself. Leave the room instead.");
       evictPlayer(room, target);
       return broadcast(room);
     }

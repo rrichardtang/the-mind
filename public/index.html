@@ -3,15 +3,38 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
-<meta name="theme-color" content="#0a0b10" />
+<meta name="theme-color" content="#0b0d0e" />
+<meta name="color-scheme" content="dark" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="description" content="Play The Mind with your friends on your phones." />
 <title>The Mind</title>
+
+<link rel="preload" href="/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin />
+<link rel="preload" href="/fonts/GeistMono-Variable.woff2" as="font" type="font/woff2" crossorigin />
 <link rel="stylesheet" href="/styles.css" />
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230b0d0e'/><g fill='%233ecf8e'><rect x='6' y='19' width='4' height='7' rx='2'/><rect x='14' y='13' width='4' height='13' rx='2'/><rect x='22' y='6' width='4' height='20' rx='2'/></g></svg>" />
 </head>
 <body>
+
+<!--
+  Icon sprite. Glyphs are Phosphor Icons (MIT, phosphoricons.com), vendored from
+  @phosphor-icons/core so the client stays request-free and offline-safe.
+  #i-mark is the app's own wordmark glyph: three ascending bars, the game in one shape.
+-->
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-mark" viewBox="0 0 24 24" fill="currentColor">
+    <rect x="2" y="14" width="4" height="8" rx="2" /><rect x="10" y="8" width="4" height="14" rx="2" /><rect x="18" y="2" width="4" height="20" rx="2" />
+  </symbol>
+  <symbol id="i-heart" viewBox="0 0 256 256" fill="currentColor"><path d="M240,98a57.63,57.63,0,0,1-17,41L133.7,229.62a8,8,0,0,1-11.4,0L33,139a58,58,0,0,1,82-82.1L128,69.05l13.09-12.19A58,58,0,0,1,240,98Z"/></symbol>
+  <symbol id="i-star" viewBox="0 0 256 256" fill="currentColor"><path d="M240,128a15.79,15.79,0,0,1-10.5,15l-63.44,23.07L143,229.5a16,16,0,0,1-30,0L89.94,166.06,26.5,143a16,16,0,0,1,0-30L89.94,89.94,113,26.5a16,16,0,0,1,30,0l23.07,63.44L229.5,113A15.79,15.79,0,0,1,240,128Z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M232.49,80.49l-128,128a12,12,0,0,1-17,0l-56-56a12,12,0,1,1,17-17L96,183,215.51,63.51a12,12,0,0,1,17,17Z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 256 256" fill="currentColor"><path d="M208.49,191.51a12,12,0,0,1-17,17L128,145,64.49,208.49a12,12,0,0,1-17-17L111,128,47.51,64.49a12,12,0,0,1,17-17L128,111l63.51-63.52a12,12,0,0,1,17,17L145,128Z"/></symbol>
+  <symbol id="i-trophy" viewBox="0 0 256 256" fill="currentColor"><path d="M232,64H208V48a8,8,0,0,0-8-8H56a8,8,0,0,0-8,8V64H24A16,16,0,0,0,8,80V96a40,40,0,0,0,40,40h3.65A80.13,80.13,0,0,0,120,191.61V216H96a8,8,0,0,0,0,16h64a8,8,0,0,0,0-16H136V191.58c31.94-3.23,58.44-25.64,68.08-55.58H208a40,40,0,0,0,40-40V80A16,16,0,0,0,232,64ZM48,120A24,24,0,0,1,24,96V80H48v32q0,4,.39,8ZM232,96a24,24,0,0,1-24,24h-.5a81.81,81.81,0,0,0,.5-8.9V80h24Z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 256 256" fill="currentColor"><path d="M216,48V208a16,16,0,0,1-16,16H160a16,16,0,0,1-16-16V48a16,16,0,0,1,16-16h40A16,16,0,0,1,216,48ZM96,32H56A16,16,0,0,0,40,48V208a16,16,0,0,0,16,16H96a16,16,0,0,0,16-16V48A16,16,0,0,0,96,32Z"/></symbol>
+  <symbol id="i-question" viewBox="0 0 256 256" fill="currentColor"><path d="M144,180a16,16,0,1,1-16-16A16,16,0,0,1,144,180Zm92-52A108,108,0,1,1,128,20,108.12,108.12,0,0,1,236,128Zm-24,0a84,84,0,1,0-84,84A84.09,84.09,0,0,0,212,128ZM128,64c-24.26,0-44,17.94-44,40v4a12,12,0,0,0,24,0v-4c0-8.82,9-16,20-16s20,7.18,20,16-9,16-20,16a12,12,0,0,0-12,12v8a12,12,0,0,0,23.73,2.56C158.31,137.88,172,122.37,172,104,172,81.94,152.26,64,128,64Z"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></symbol>
+</svg>
 
 <div id="toast" class="toast" role="alert" aria-live="assertive" hidden></div>
 <div id="mistake-popup" class="mistake-popup" role="alert" aria-live="assertive" hidden></div>
@@ -20,9 +43,9 @@
 <section id="screen-home" class="screen">
   <div class="home">
     <header class="brand">
-      <div class="brand-mark">◈</div>
+      <svg class="brand-mark" aria-hidden="true"><use href="#i-mark" /></svg>
       <h1>The Mind</h1>
-      <p>One deck. No talking. Play in order.</p>
+      <p class="lede">One deck. No talking. Play in order.</p>
     </header>
 
     <div class="stack">
@@ -34,11 +57,12 @@
 
       <button id="btn-create" class="btn btn-primary">Create a room</button>
 
-      <div class="divider"><span>or join one</span></div>
+      <div class="divider"><span>or</span></div>
 
       <div class="join-row">
         <input id="input-code" class="code-input" type="text" maxlength="4" placeholder="CODE"
-               autocapitalize="characters" autocomplete="off" spellcheck="false" enterkeyhint="go" />
+               autocapitalize="characters" autocomplete="off" spellcheck="false" enterkeyhint="go"
+               aria-label="Room code" />
         <button id="btn-join" class="btn btn-ghost">Join</button>
       </div>
     </div>
@@ -51,18 +75,24 @@
 <section id="screen-lobby" class="screen" hidden>
   <div class="lobby">
     <header class="lobby-head">
-      <p class="eyebrow">Room code</p>
-      <button id="room-code" class="room-code" title="Tap to copy">----</button>
+      <p class="label">Room code</p>
+      <button id="room-code" class="room-code" title="Tap to copy">
+        <span id="room-code-value" class="room-code-value">----</span>
+        <svg class="i room-code-icon" aria-hidden="true"><use href="#i-copy" /></svg>
+      </button>
       <p class="hint">Share this code so your friends can join.</p>
     </header>
 
     <ul id="lobby-players" class="players"></ul>
 
     <div class="lobby-foot">
-      <p id="lobby-status" class="hint"></p>
+      <p id="lobby-status" class="lobby-status"></p>
       <label id="timed-toggle" class="timed-toggle" hidden>
         <input id="input-timed" type="checkbox" />
-        <span>Timed levels — seconds per card dealt</span>
+        <span class="timed-copy">
+          <b>Timed levels</b>
+          <em>A countdown per level. Run it down and the game ends.</em>
+        </span>
       </label>
       <button id="btn-start" class="btn btn-primary">Start game</button>
       <button id="btn-leave-lobby" class="link-btn">Leave room</button>
@@ -74,16 +104,23 @@
 <section id="screen-game" class="screen" hidden>
   <header class="hud">
     <div class="hud-level">
-      <span class="eyebrow">Level</span>
-      <strong id="hud-level">1</strong>
-      <span id="hud-maxlevel" class="hud-sub">/ 12</span>
+      <span class="label">Level</span>
+      <strong id="hud-level">1</strong><span id="hud-maxlevel" class="hud-sub">/12</span>
     </div>
-    <div id="hud-timer" class="hud-timer" hidden>0:00</div>
+
+    <div id="hud-timer" class="hud-timer" hidden>
+      <svg class="i" aria-hidden="true"><use href="#i-pause" /></svg>
+      <span id="hud-timer-value">0:00</span>
+    </div>
+
     <div class="hud-tokens">
       <div class="token-group" id="hud-lives" title="Lives"></div>
       <div class="token-group" id="hud-shurikens" title="Shurikens"></div>
     </div>
-    <button id="btn-rules-game" class="icon-btn" aria-label="How to play">?</button>
+
+    <button id="btn-rules-game" class="icon-btn" aria-label="How to play">
+      <svg class="i" aria-hidden="true"><use href="#i-question" /></svg>
+    </button>
   </header>
 
   <ul id="seats" class="seats"></ul>
@@ -97,7 +134,7 @@
 
     <div class="hero-wrap">
       <button id="hero" class="hero">
-        <span id="hero-num" class="hero-num">—</span>
+        <span id="hero-num" class="hero-num">0</span>
         <span id="hero-hint" class="hero-hint"></span>
       </button>
       <div id="ghosts" class="ghosts" aria-hidden="true"></div>
@@ -109,8 +146,7 @@
   <!-- Ready gate -->
   <div id="overlay-ready" class="overlay" hidden>
     <div class="overlay-card">
-      <p class="eyebrow">Level <span id="ready-level">1</span></p>
-      <h2>Focus.</h2>
+      <h2 class="overlay-title">Level <span id="ready-level">1</span></h2>
       <p class="hint">Everyone taps ready, then play in ascending order without saying a word.</p>
       <div id="ready-list" class="ready-list"></div>
       <button id="btn-ready" class="btn btn-primary">I'm ready</button>
@@ -120,8 +156,8 @@
   <!-- Level cleared / won / lost -->
   <div id="overlay-result" class="overlay" hidden>
     <div class="overlay-card">
-      <div id="result-icon" class="result-icon">✓</div>
-      <h2 id="result-title">Level cleared</h2>
+      <div id="result-icon" class="result-icon"></div>
+      <h2 id="result-title" class="overlay-title">Level cleared</h2>
       <p id="result-body" class="hint"></p>
       <button id="btn-result" class="btn btn-primary">Next level</button>
     </div>
@@ -129,9 +165,11 @@
 
   <footer class="hand-area">
     <div class="hand-bar">
-      <span id="hand-label" class="eyebrow">Your hand</span>
+      <span id="hand-label" class="label">Your hand</span>
       <button id="btn-star" class="btn btn-star">
-        <span class="star-glyph">✦</span><span id="star-label">Throw shuriken</span>
+        <svg class="i star-glyph" aria-hidden="true"><use href="#i-star" /></svg>
+        <span id="star-label">Throw shuriken</span>
+        <span class="star-fill" aria-hidden="true"></span>
       </button>
     </div>
     <div id="hand" class="hand"></div>
@@ -141,20 +179,22 @@
 <!-- ── Rules ────────────────────────────────────────────── -->
 <div id="overlay-rules" class="overlay" hidden>
   <div class="overlay-card overlay-scroll">
-    <h2>How to play</h2>
+    <h2 class="overlay-title">How to play</h2>
     <ul class="rules">
-      <li>The deck is <b>1–100</b>. On level N everyone is dealt N cards.</li>
+      <li>The deck is <b>1 to 100</b>. On level N everyone is dealt N cards.</li>
       <li>Together you must play every card into one pile in <b>ascending order</b>.</li>
       <li><b>No talking</b>, no hinting, no counting out loud. Just feel the timing.</li>
-      <li>Play a card while someone still holds a lower one and you <b>lose a life</b> — every lower card is discarded. Everyone involved gets called out with a popup.</li>
-      <li>A <b>shuriken ✦</b> needs everyone to agree. Each player then discards their lowest card face up.</li>
+      <li>Play a card while someone still holds a lower one and you <b>lose a life</b>. Every lower card is discarded, and everyone involved gets called out.</li>
+      <li>A <b>shuriken</b> needs everyone to agree. Each player then discards their lowest card face up.</li>
       <li>Clearing certain levels earns a bonus life or shuriken.</li>
       <li>On a <b>timed</b> run each level gives you a set number of seconds per card dealt. Let the clock reach zero and the whole run is over. The clock pauses while anyone is offline.</li>
-      <li>Lives at zero ends the run. Clear the final level and you've beaten The Mind.</li>
+      <li>Lives at zero ends the run. Clear the final level and you have beaten The Mind.</li>
     </ul>
     <button id="btn-rules-close" class="btn btn-ghost">Got it</button>
   </div>
 </div>
+
+<div class="grain" aria-hidden="true"></div>
 
 <script src="/app.js"></script>
 </body>
