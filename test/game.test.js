@@ -103,6 +103,19 @@ test('a mistake that empties every hand still ends the level', () => {
   assert.equal(g.phase, 'levelCleared');
 });
 
+test('a mistake logs the culprit, victims, and a message from each pool', () => {
+  const g = staged({ a: [50], b: [10, 20], c: [30] });
+  playCard(g, 'a', 50, nameOf);
+  const entry = g.log.find((e) => e.kind === 'mistake');
+  assert.ok(entry);
+  assert.equal(entry.culprit, 'a');
+  assert.deepEqual([...entry.victims].sort(), ['b', 'c']);
+  assert.equal(typeof entry.culpritMessage, 'string');
+  assert.ok(entry.culpritMessage.length > 0);
+  assert.equal(typeof entry.victimMessage, 'string');
+  assert.ok(entry.victimMessage.length > 0);
+});
+
 test('a shuriken needs unanimous votes and discards each lowest card', () => {
   const g = staged({ a: [5, 40], b: [20], c: [70] });
   toggleStarVote(g, 'a', IDS, nameOf);

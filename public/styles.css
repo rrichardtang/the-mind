@@ -612,6 +612,28 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 }
 .toast[hidden] { display: none; }
 
+/* ── Mistake popup ──────────────────────────────────────── */
+.mistake-popup {
+  position: fixed;
+  left: 50%;
+  top: 30%;
+  transform: translateX(-50%);
+  z-index: 60;
+  max-width: min(88vw, 380px);
+  padding: 16px 22px;
+  border-radius: var(--radius-lg);
+  font-size: 1.2rem;
+  font-weight: 650;
+  text-align: center;
+  color: var(--text);
+  background: var(--bg-raise);
+  box-shadow: var(--shadow);
+}
+.mistake-popup[hidden] { display: none; }
+.mistake-popup.culprit { border: 2px solid var(--bad); }
+.mistake-popup.victim { border: 2px solid var(--good); }
+.mistake-popup.show { animation: shake 0.32s ease; }
+
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }

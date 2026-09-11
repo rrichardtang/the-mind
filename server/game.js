@@ -28,6 +28,27 @@ const REWARDS = { 2: 'shuriken', 3: 'life', 5: 'shuriken', 6: 'life', 8: 'shurik
 // so the pressure scales with the hands on the table. Edit here to retune it.
 export const SECONDS_PER_CARD = 20;
 
+// Playful trash-talk shown to whoever caused a mistake, and to whoever was
+// holding one of the burned cards. Edit here to retune the voice/rotation.
+const CULPRIT_MESSAGES = [
+  'Not so fast, buster.',
+  'Slow your roll, champ.',
+  "What's the hurry?",
+  'Cutting is bad etiquette.',
+  'Somebody was feeling lucky.',
+  'Easy there, speed racer.',
+];
+const VICTIM_MESSAGES = [
+  'Hurry up, gramps.',
+  'No guts, no glory.',
+  'Should have played it sooner.',
+  'Too slow!',
+  'Asleep at the wheel?',
+  "That one's on you too.",
+];
+
+const pick = (pool) => pool[Math.floor(Math.random() * pool.length)];
+
 export function levelsFor(playerCount) {
   return LEVELS_BY_PLAYERS[playerCount] ?? 8;
 }
@@ -162,9 +183,12 @@ export function playCard(game, playerId, card, nameOf) {
   } else {
     // Mistake: every card below the one played is burned, and it costs a life.
     const burned = [];
+    const victims = new Set();
     for (const id of game.playerIds) {
       const kept = [];
-      for (const c of game.hands[id]) (c < card ? burned : kept).push(c);
+      for (const c of game.hands[id]) {
+        if (c < card) { burned.push(c); victims.add(id); } else kept.push(c);
+      }
       game.hands[id] = kept;
     }
     burned.sort((a, b) => a - b);
@@ -174,6 +198,10 @@ export function playCard(game, playerId, card, nameOf) {
     log(game, 'mistake', `${nameOf(playerId)} played ${card} — ${burned.join(', ')} were still out. Lost a life.`, {
       card,
       burned,
+      culprit: playerId,
+      victims: [...victims],
+      culpritMessage: pick(CULPRIT_MESSAGES),
+      victimMessage: pick(VICTIM_MESSAGES),
     });
     if (game.lives <= 0) {
       game.lives = 0;

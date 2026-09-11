@@ -22,7 +22,7 @@
   let intent = null;      // pending {type:'create'|'join', ...} to send once open
   let heroValue = null;   // card on the hero now, so we only animate real changes
   let lastLives = null;
-  let lastLogId = 0;
+  let lastLogId = null;   // null means "haven't seen a log yet" — distinct from a real id
   let entering = false;   // a create/join is in flight, so the buttons stay locked
 
   /* ── Connection ─────────────────────────────────────── */
@@ -102,6 +102,19 @@
     node.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { node.hidden = true; }, 3200);
+  }
+
+  let mistakePopupTimer;
+  /** Big, per-player callout on a mistake — additive to the dim #feed line. */
+  function showMistakePopup(text, variant) {
+    const node = $('mistake-popup');
+    node.textContent = text;
+    node.className = `mistake-popup ${variant}`;
+    node.hidden = false;
+    void node.offsetWidth; // restart the entrance animation on repeat mistakes
+    node.classList.add('show');
+    clearTimeout(mistakePopupTimer);
+    mistakePopupTimer = setTimeout(() => { node.hidden = true; }, 2200);
   }
 
   let enteringTimer;
@@ -353,7 +366,21 @@
     else if (last.kind === 'shuriken') node.classList.add('shuriken');
     else if (last.kind === 'cleared') node.classList.add('good');
     node.textContent = last.text;
-    if (last.id !== lastLogId && last.kind === 'shuriken') buzz(30);
+    // A fresh page load (not just a WS reconnect within the same session) starts
+    // lastLogId back at null, and the server's state can already have an old
+    // mistake as its last log entry — don't replay that event's buzz/popup.
+    if (lastLogId !== null && last.id !== lastLogId) {
+      if (last.kind === 'shuriken') buzz(30);
+      if (last.kind === 'mistake') {
+        if (state.you.id === last.culprit) {
+          showMistakePopup(last.culpritMessage, 'culprit');
+          buzz([40, 60, 40]);
+        } else if (last.victims?.includes(state.you.id)) {
+          showMistakePopup(last.victimMessage, 'victim');
+          buzz(50);
+        }
+      }
+    }
     lastLogId = last.id;
   }
 
