@@ -1,0 +1,9 @@
+- `npm install` is not pre-run in fresh web sessions; `test/server.test.js` fails with `Cannot find package 'ws'` until you run it.
+- E2E helper gotcha: `Client.state()` consumes queued messages, so a shared "start the room" helper must return the state it awaited rather than letting the test await the same one again (it will hang for 4s and fail).
+- Room timers (`room.timerId`) are driven from `broadcast()` via `syncTimer(room)`; `deleteRoom()` and `endGame()` reuse it so nothing fires against a dead room.
+- Timed clock state: `deadlineAt` (running) XOR `msLeft` (paused), plus a `paused` flag; `armClock()` is the only writer, so "running and paused" is unrepresentable. `paused` is needed separately because a drop during the ready gate has no clock to hold yet.
+- `broadcast()` is the single funnel for connection changes (dropSeat/joinRoom/evict all end there), so pause/resume and the setTimeout both sync from it, off one `Date.now()` read for the whole broadcast.
+- E2E timing tests run against a second server on port 3972 spawned with `MIND_SECONDS_PER_CARD=0.5`; `Client.open(url)` takes the URL.
+- `Client.state()` with no predicate can return a *stale queued* state (e.g. a pre-game one) — always match on what you actually want.
+- Third test server on port 3973 (`GARBAGE_URL`) covers `MIND_SECONDS_PER_CARD` garbage-value fallback; reuse it rather than spinning a 4th.
+- A mistake that empties every hand immediately appends a 'cleared' log entry after 'mistake' — grab the mistake entry with `.find`, not `log[log.length-1]`.

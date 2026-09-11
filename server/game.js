@@ -24,6 +24,31 @@ const LEVELS_BY_PLAYERS = { 2: 12, 3: 10, 4: 8, 5: 8, 6: 8 };
 // layout. Edit here to match the cards in your own copy of the game.
 const REWARDS = { 2: 'shuriken', 3: 'life', 5: 'shuriken', 6: 'life', 8: 'shuriken', 9: 'life' };
 
+// Optional per-level clock: this many seconds for every card dealt this level,
+// so the pressure scales with the hands on the table. Edit here to retune it.
+export const SECONDS_PER_CARD = 20;
+
+// Playful trash-talk shown to whoever caused a mistake, and to whoever was
+// holding one of the burned cards. Edit here to retune the voice/rotation.
+const CULPRIT_MESSAGES = [
+  'Not so fast, buster.',
+  'Slow your roll, champ.',
+  "What's the hurry?",
+  'Cutting is bad etiquette.',
+  'Somebody was feeling lucky.',
+  'Easy there, speed racer.',
+];
+const VICTIM_MESSAGES = [
+  'Hurry up, gramps.',
+  'No guts, no glory.',
+  'Should have played it sooner.',
+  'Too slow!',
+  'Asleep at the wheel?',
+  "That one's on you too.",
+];
+
+const pick = (pool) => pool[Math.floor(Math.random() * pool.length)];
+
 export function levelsFor(playerCount) {
   return LEVELS_BY_PLAYERS[playerCount] ?? 8;
 }
@@ -38,7 +63,7 @@ function shuffledDeck() {
 }
 
 /** Start a fresh run. `playerIds` fixes the seating for the whole game. */
-export function createGame(playerIds) {
+export function createGame(playerIds, { timed = false, secondsPerCard = SECONDS_PER_CARD } = {}) {
   const game = {
     playerIds: [...playerIds],
     maxLevel: levelsFor(playerIds.length),
@@ -49,6 +74,14 @@ export function createGame(playerIds) {
     pile: [], // cards successfully played, ascending
     discarded: [], // cards lost to mistakes or shurikens
     phase: 'ready', // ready | playing | levelCleared | won | lost
+    timed,
+    msPerCard: secondsPerCard * 1000,
+    // A level's clock is either running (deadlineAt, epoch ms) or paused
+    // (msLeft), never both: armClock is the only thing that sets either.
+    deadlineAt: null,
+    msLeft: null,
+    paused: false, // true while a seated player is disconnected
+    lostTo: null, // 'lives' | 'time', once the run is lost
     ready: [],
     starVotes: [],
     lastReward: null,
@@ -71,6 +104,42 @@ function dealLevel(game) {
   game.starVotes = [];
   game.livesLostThisLevel = 0;
   game.phase = 'ready';
+  clearClock(game);
+}
+
+const levelBudget = (game) => game.msPerCard * game.playerIds.length * game.level;
+
+function clearClock(game) {
+  game.deadlineAt = null;
+  game.msLeft = null;
+}
+
+/** Put `ms` on the clock, running or held, depending on the pause state. */
+function armClock(game, ms, now) {
+  game.deadlineAt = game.paused ? null : now + ms;
+  game.msLeft = game.paused ? ms : null;
+}
+
+const msRemaining = (game, now) =>
+  game.msLeft ?? (game.deadlineAt == null ? null : Math.max(0, game.deadlineAt - now));
+
+/**
+ * Freeze or resume the level's clock. A disconnected player's cards cannot be
+ * played by anyone, so a timed level would be unclearable through no fault of
+ * the table — the clock waits for them instead.
+ */
+export function setClockPaused(game, paused, now = Date.now()) {
+  if (!game.timed || game.paused === paused) return;
+  const left = msRemaining(game, now);
+  game.paused = paused;
+  if (left != null) armClock(game, left, now);
+}
+
+function loseRun(game, lostTo, text) {
+  game.phase = 'lost';
+  game.lostTo = lostTo;
+  clearClock(game);
+  log(game, 'lost', text);
 }
 
 function log(game, kind, text, extra = {}) {
@@ -82,12 +151,14 @@ const cardsLeft = (game) => game.playerIds.flatMap((id) => game.hands[id] ?? [])
 const lowestOutstanding = (game) => Math.min(...cardsLeft(game));
 
 /** Mark a player ready for the current level. Everyone ready -> level begins. */
-export function setReady(game, playerId, activeIds) {
+export function setReady(game, playerId, activeIds, now = Date.now()) {
   if (game.phase !== 'ready') return;
   if (!game.ready.includes(playerId)) game.ready.push(playerId);
   const allReady = activeIds.every((id) => game.ready.includes(id));
   if (allReady && activeIds.length > 0) {
     game.phase = 'playing';
+    // The clock only starts once play does — the ready gate is untimed.
+    if (game.timed) armClock(game, levelBudget(game), now);
     log(game, 'level', `Level ${game.level} — concentrate.`);
   }
 }
@@ -112,9 +183,12 @@ export function playCard(game, playerId, card, nameOf) {
   } else {
     // Mistake: every card below the one played is burned, and it costs a life.
     const burned = [];
+    const victims = new Set();
     for (const id of game.playerIds) {
       const kept = [];
-      for (const c of game.hands[id]) (c < card ? burned : kept).push(c);
+      for (const c of game.hands[id]) {
+        if (c < card) { burned.push(c); victims.add(id); } else kept.push(c);
+      }
       game.hands[id] = kept;
     }
     burned.sort((a, b) => a - b);
@@ -124,11 +198,14 @@ export function playCard(game, playerId, card, nameOf) {
     log(game, 'mistake', `${nameOf(playerId)} played ${card} — ${burned.join(', ')} were still out. Lost a life.`, {
       card,
       burned,
+      culprit: playerId,
+      victims: [...victims],
+      culpritMessage: pick(CULPRIT_MESSAGES),
+      victimMessage: pick(VICTIM_MESSAGES),
     });
     if (game.lives <= 0) {
       game.lives = 0;
-      game.phase = 'lost';
-      log(game, 'lost', 'Out of lives. The run is over.');
+      loseRun(game, 'lives', 'Out of lives. The run is over.');
       return { ok: true };
     }
   }
@@ -172,6 +249,8 @@ function throwStar(game, nameOf) {
 function checkLevelEnd(game) {
   if (cardsLeft(game).length > 0) return;
 
+  clearClock(game);
+
   if (game.level >= game.maxLevel) {
     game.phase = 'won';
     log(game, 'won', `Level ${game.level} cleared. You beat The Mind.`);
@@ -192,6 +271,16 @@ function checkLevelEnd(game) {
   log(game, 'cleared', `Level ${game.level} cleared.${suffix}`);
 }
 
+/**
+ * End the run if the level's clock has run out. Safe to call at any time: it
+ * only ever fires on a timed level that is still being played.
+ */
+export function checkTimeout(game, now) {
+  // A paused clock has no deadline, so it can never expire here.
+  if (!game.timed || game.phase !== 'playing' || game.deadlineAt == null || now < game.deadlineAt) return;
+  loseRun(game, 'time', 'The clock ran out. The run is over.');
+}
+
 /** Advance to the next level and deal fresh hands. */
 export function nextLevel(game) {
   if (game.phase !== 'levelCleared') return;
@@ -204,7 +293,7 @@ export function nextLevel(game) {
  * View of the game for one player: their own hand in full, everyone else's as
  * a count only. This is the whole reason the rules live on the server.
  */
-export function viewFor(game, playerId, players) {
+export function viewFor(game, playerId, players, now = Date.now()) {
   return {
     level: game.level,
     maxLevel: game.maxLevel,
@@ -212,6 +301,15 @@ export function viewFor(game, playerId, players) {
     maxLives: MAX_LIVES,
     shurikens: game.shurikens,
     phase: game.phase,
+    timed: game.timed,
+    // Remaining time, not the deadline: the client counts down from when the
+    // state lands, so a skewed phone clock can never desync the display.
+    msRemaining: msRemaining(game, now),
+    // The level's full budget, so the client can shade the clock as a fraction
+    // of it rather than re-deriving the rule.
+    msBudget: game.timed ? levelBudget(game) : null,
+    clockPaused: game.paused,
+    lostTo: game.lostTo,
     hand: game.hands[playerId] ?? [],
     pile: game.pile.map((p) => p.card),
     topCard: game.pile.length ? game.pile[game.pile.length - 1].card : null,
