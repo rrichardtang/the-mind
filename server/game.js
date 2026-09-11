@@ -159,7 +159,7 @@ export function setReady(game, playerId, activeIds, now = Date.now()) {
     game.phase = 'playing';
     // The clock only starts once play does — the ready gate is untimed.
     if (game.timed) armClock(game, levelBudget(game), now);
-    log(game, 'level', `Level ${game.level} — concentrate.`);
+    log(game, 'level', `Level ${game.level}. Concentrate.`);
   }
 }
 
@@ -195,7 +195,7 @@ export function playCard(game, playerId, card, nameOf) {
     game.discarded.push(...burned);
     game.lives -= 1;
     game.livesLostThisLevel += 1;
-    log(game, 'mistake', `${nameOf(playerId)} played ${card} — ${burned.join(', ')} were still out. Lost a life.`, {
+    log(game, 'mistake', `${nameOf(playerId)} played ${card}. ${burned.join(', ')} were still out. Lost a life.`, {
       card,
       burned,
       culprit: playerId,
@@ -242,7 +242,7 @@ function throwStar(game, nameOf) {
   }
   game.discarded.sort((a, b) => a - b);
   const summary = revealed.map((r) => `${r.name} ${r.card}`).join(', ');
-  log(game, 'shuriken', `Shuriken thrown — discarded ${summary || 'nothing'}.`, { revealed });
+  log(game, 'shuriken', `Shuriken thrown. Discarded ${summary || 'nothing'}.`, { revealed });
   checkLevelEnd(game);
 }
 

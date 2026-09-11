@@ -10,6 +10,18 @@
     return n;
   };
 
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  /** One glyph from the sprite in index.html. */
+  const icon = (name, cls) => {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', cls ? `i ${cls}` : 'i');
+    svg.setAttribute('aria-hidden', 'true');
+    const use = document.createElementNS(SVG_NS, 'use');
+    use.setAttribute('href', `#i-${name}`);
+    svg.append(use);
+    return svg;
+  };
+
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch { return null; } },
     set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
@@ -24,6 +36,21 @@
   let lastLives = null;
   let lastLogId = null;   // null means "haven't seen a log yet" — distinct from a real id
   let entering = false;   // a create/join is in flight, so the buttons stay locked
+
+  /**
+   * A snapshot of the last render. Lists are rebuilt wholesale on every state,
+   * which would otherwise replay every entrance animation on every message —
+   * so each animation is gated on something here actually having changed.
+   */
+  const prev = {
+    hand: [],
+    topCard: null,
+    ready: [],
+    lobbyIds: [],
+    seatCards: new Map(),
+    lives: null,
+    shurikens: null,
+  };
 
   /* ── Connection ─────────────────────────────────────── */
 
@@ -100,6 +127,7 @@
     const node = $('toast');
     node.textContent = text;
     node.hidden = false;
+    void node.offsetWidth; // restart the entrance on a repeat toast
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { node.hidden = true; }, 3200);
   }
@@ -115,6 +143,13 @@
     node.classList.add('show');
     clearTimeout(mistakePopupTimer);
     mistakePopupTimer = setTimeout(() => { node.hidden = true; }, 2200);
+  }
+
+  /** A mistake washes the whole screen once, then cleans itself up. */
+  function dangerFlash() {
+    const flash = el('div', 'danger-flash');
+    flash.addEventListener('animationend', () => flash.remove());
+    document.body.append(flash);
   }
 
   let enteringTimer;
@@ -162,25 +197,30 @@
   }
 
   function renderLobby() {
-    $('room-code').textContent = state.code;
+    $('room-code-value').textContent = state.code;
 
     const list = $('lobby-players');
+    const ids = state.lobby.map((p) => p.id);
     list.replaceChildren();
     for (const p of state.lobby) {
       const li = el('li');
+      // Only a player who wasn't here on the last render slides in.
+      if (prev.lobbyIds.length && !prev.lobbyIds.includes(p.id)) li.classList.add('arriving');
       li.append(el('span', 'avatar', initials(p.name)), el('span', 'player-name', p.name));
       if (p.isHost) li.append(el('span', 'tag', 'Host'));
       if (p.id === state.you.id) li.append(el('span', 'tag', 'You'));
       if (state.you.isHost && p.id !== state.you.id) {
-        const remove = el('button', 'remove-btn', '✕');
+        const remove = el('button', 'remove-btn');
         remove.type = 'button';
         remove.title = `Remove ${p.name}`;
         remove.setAttribute('aria-label', `Remove ${p.name}`);
+        remove.append(icon('x'));
         remove.addEventListener('click', () => send({ type: 'removePlayer', playerId: p.id }));
         li.append(remove);
       }
       list.append(li);
     }
+    prev.lobbyIds = ids;
 
     $('timed-toggle').hidden = !state.you.isHost;
 
@@ -189,20 +229,47 @@
     start.hidden = !state.you.isHost;
     start.disabled = !enough;
 
-    $('lobby-status').textContent = !enough
-      ? `Waiting for players — ${state.minPlayers} minimum, up to ${state.maxPlayers}.`
-      : state.you.isHost
-        ? `${state.lobby.length} players · ${state.plannedLevels} levels · ${state.lobby.length} lives · 1 shuriken`
-        : 'Waiting for the host to start…';
+    renderLobbyStatus(enough);
+  }
+
+  /** Run setup as a small readout, so the numbers line up instead of running
+   *  together in one dot-separated sentence. */
+  function renderLobbyStatus(enough) {
+    const node = $('lobby-status');
+    node.replaceChildren();
+
+    if (!enough) {
+      node.textContent = `Waiting for players. ${state.minPlayers} minimum, up to ${state.maxPlayers}.`;
+      return;
+    }
+    if (!state.you.isHost) {
+      node.textContent = 'Waiting for the host to start…';
+      return;
+    }
+
+    const n = state.lobby.length;
+    const stats = [
+      [n, n === 1 ? 'player' : 'players'],
+      [state.plannedLevels, 'levels'],
+      [n, n === 1 ? 'life' : 'lives'],
+      [1, 'shuriken'],
+    ];
+    for (const [value, label] of stats) {
+      const stat = el('span', 'stat');
+      stat.append(el('span', 'stat-value', value), el('span', 'stat-label', label));
+      node.append(stat);
+    }
   }
 
   function renderGame() {
     const g = state.game;
 
     $('hud-level').textContent = g.level;
-    $('hud-maxlevel').textContent = `/ ${g.maxLevel}`;
-    renderTokens($('hud-lives'), g.lives, g.maxLives, 'life', '♥');
-    renderTokens($('hud-shurikens'), g.shurikens, 4, 'star', '✦');
+    $('hud-maxlevel').textContent = `/${g.maxLevel}`;
+    renderTokens($('hud-lives'), g.lives, g.maxLives, 'life', 'heart', prev.lives);
+    renderTokens($('hud-shurikens'), g.shurikens, 4, 'star', 'star', prev.shurikens);
+    prev.lives = g.lives;
+    prev.shurikens = g.shurikens;
 
     renderTimer(g);
     renderSeats(g);
@@ -248,7 +315,7 @@
   function paintTimer(left, paused) {
     const secs = Math.ceil(left / 1000);
     const node = $('hud-timer');
-    node.textContent = `${paused ? '⏸ ' : ''}${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+    $('hud-timer-value').textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
     node.classList.toggle('paused', paused);
     node.classList.toggle('urgent', !paused && left <= urgentBelow);
   }
@@ -258,29 +325,56 @@
     timerInterval = null;
   }
 
-  function renderTokens(node, count, max, cls, glyph) {
+  /**
+   * One glyph per resource, spent ones dimmed. The token that just changed
+   * animates, so losing a life reads as the heart draining rather than a
+   * number quietly going down.
+   */
+  function renderTokens(node, count, max, cls, glyph, before) {
     node.replaceChildren();
     const shown = Math.max(count, Math.min(max, count + 1));
     for (let i = 0; i < shown; i++) {
-      node.append(el('span', `token ${cls}${i < count ? '' : ' spent'}`, glyph));
+      const spent = i >= count;
+      const token = icon(glyph, `token ${cls}${spent ? ' spent' : ''}`);
+      if (before != null && before !== count) {
+        if (spent && i < before) token.classList.add('draining');
+        else if (!spent && i >= before) token.classList.add('gained');
+      }
+      node.append(token);
     }
   }
 
   function renderSeats(g) {
     const node = $('seats');
     node.replaceChildren();
+    const counts = new Map();
+
     for (const s of g.seats) {
+      counts.set(s.id, s.cards);
       const li = el('li');
       if (s.id === state.you.id) li.classList.add('is-you');
       if (!s.connected) li.classList.add('is-out');
       if (g.phase === 'ready' && s.ready) li.classList.add('is-ready');
       if (g.phase === 'playing' && s.votedStar) li.classList.add('is-voting');
       li.append(el('div', 'seat-name', s.id === state.you.id ? 'You' : s.name));
-      const meta = !s.connected ? 'offline' : s.votedStar && g.phase === 'playing' ? '✦ voted'
-        : `${s.cards} card${s.cards === 1 ? '' : 's'}`;
-      li.append(el('div', 'seat-meta', meta));
+
+      const meta = el('div', 'seat-meta');
+      if (!s.connected) {
+        meta.append(el('span', null, 'offline'));
+      } else if (s.votedStar && g.phase === 'playing') {
+        meta.append(icon('star'), el('span', null, 'voted'));
+      } else {
+        const count = el('span', 'seat-count', s.cards);
+        // Someone played: their count ticks rather than silently swapping.
+        if (prev.seatCards.has(s.id) && prev.seatCards.get(s.id) !== s.cards) {
+          count.classList.add('changed');
+        }
+        meta.append(count, el('span', null, s.cards === 1 ? 'card' : 'cards'));
+      }
+      li.append(meta);
       node.append(li);
     }
+    prev.seatCards = counts;
   }
 
   function renderPile(g) {
@@ -291,6 +385,7 @@
       ...g.discarded.map((c) => ({ card: c, burned: true })),
     ].sort((a, b) => a.card - b.card);
 
+    const landed = g.topCard != null && g.topCard !== prev.topCard;
     const trail = $('pile-trail');
     trail.replaceChildren();
     if (resolved.length === 0) {
@@ -298,10 +393,15 @@
     } else {
       for (const r of resolved) {
         const latest = !r.burned && r.card === g.topCard;
-        trail.append(el('span', `chip${r.burned ? ' burned' : ''}${latest ? ' latest' : ''}`, r.card));
+        const chip = el('span', `chip${r.burned ? ' burned' : ''}${latest ? ' latest' : ''}`, r.card);
+        // Only a genuinely new top card drops in; a re-render of the same
+        // pile leaves the chips still.
+        if (latest && landed) chip.classList.add('land');
+        trail.append(chip);
       }
       trail.scrollLeft = trail.scrollWidth;
     }
+    prev.topCard = g.topCard ?? null;
     $('pile-count').textContent = `${g.cardsRemaining} left`;
   }
 
@@ -317,7 +417,9 @@
     if (lowest != null) {
       $('hero-num').textContent = lowest;
       $('hero-hint').textContent = live ? 'Tap to play' : 'Waiting';
+      hero.dataset.card = lowest; // drives the corner indices
     } else {
+      delete hero.dataset.card;
       $('hero-num').textContent = g.phase === 'ready' ? 'Get ready' : "You're out";
       $('hero-hint').textContent = g.phase === 'ready' ? '' : 'Help the others land theirs';
     }
@@ -334,6 +436,7 @@
       hero.classList.remove('wrong');
       void hero.offsetWidth;
       hero.classList.add('wrong');
+      dangerFlash();
       buzz([40, 60, 40]);
     }
   }
@@ -361,15 +464,18 @@
     const last = g.log[g.log.length - 1];
     const node = $('feed');
     node.className = 'feed';
-    if (!last) { node.textContent = ''; return; }
+    if (!last) { node.replaceChildren(); return; }
     if (last.kind === 'mistake') node.classList.add('mistake');
     else if (last.kind === 'shuriken') node.classList.add('shuriken');
     else if (last.kind === 'cleared') node.classList.add('good');
-    node.textContent = last.text;
+    // Wrapped so a new line fades in; re-rendering the same line leaves it be.
+    const fresh = last.id !== lastLogId;
+    if (fresh || !node.firstChild) node.replaceChildren(el('span', null, last.text));
+    else node.firstChild.textContent = last.text;
     // A fresh page load (not just a WS reconnect within the same session) starts
     // lastLogId back at null, and the server's state can already have an old
     // mistake as its last log entry — don't replay that event's buzz/popup.
-    if (lastLogId !== null && last.id !== lastLogId) {
+    if (lastLogId !== null && fresh) {
       if (last.kind === 'shuriken') buzz(30);
       if (last.kind === 'mistake') {
         if (state.you.id === last.culprit) {
@@ -389,19 +495,32 @@
     node.replaceChildren();
 
     if (g.hand.length === 0) {
-      node.append(el('div', 'hand-empty', 'No cards left — help the others land theirs.'));
+      node.append(el('div', 'hand-empty', 'No cards left. Help the others land theirs.'));
     } else {
       // The slider shows your hand at a glance; the hero card is what you press.
-      g.hand.forEach((card, i) => node.append(el('div', `card${i === 0 ? ' next' : ''}`, card)));
+      // Cards you were not already holding are dealt in, staggered — which in
+      // practice means the start of a level, since a hand only ever shrinks.
+      let dealt = 0;
+      g.hand.forEach((card, i) => {
+        const cardEl = el('div', `card${i === 0 ? ' next' : ''}`, card);
+        if (!prev.hand.includes(card)) {
+          cardEl.classList.add('dealt');
+          cardEl.style.setProperty('--i', dealt++);
+        }
+        node.append(cardEl);
+      });
       node.scrollLeft = 0;
     }
+    prev.hand = [...g.hand];
 
-    $('hand-label').textContent = g.hand.length ? `Your hand · ${g.hand.length}` : 'Your hand · empty';
+    $('hand-label').textContent = g.hand.length ? `Your hand · ${g.hand.length}` : 'Your hand';
 
     const star = $('btn-star');
     const votesNeeded = g.seats.filter((s) => s.connected).length;
     star.disabled = g.phase !== 'playing' || g.shurikens === 0;
     star.classList.toggle('voted', g.starVotes.includes(state.you.id));
+    // The control fills as votes land, so progress toward unanimity is visible.
+    star.style.setProperty('--vote', votesNeeded ? g.starVotes.length / votesNeeded : 0);
     $('star-label').textContent = g.shurikens === 0
       ? 'No shurikens'
       : g.starVotes.length > 0
@@ -417,12 +536,17 @@
       const list = $('ready-list');
       list.replaceChildren(...g.seats.filter((s) => s.connected).map((s) => {
         const chip = el('span', `chip${s.ready ? ' on' : ''}`, s.id === state.you.id ? 'You' : s.name);
+        // Only the player who just readied pops; the rest sit still.
+        if (s.ready && !prev.ready.includes(s.id)) chip.classList.add('just');
         return chip;
       }));
+      prev.ready = g.seats.filter((s) => s.ready).map((s) => s.id);
       const btn = $('btn-ready');
       const iAmReady = g.ready.includes(state.you.id);
       btn.disabled = iAmReady;
       btn.textContent = iAmReady ? 'Waiting for the others…' : "I'm ready";
+    } else {
+      prev.ready = [];
     }
 
     const result = $('overlay-result');
@@ -430,22 +554,22 @@
     result.hidden = !done;
     if (!done) return;
 
-    const icon = $('result-icon');
+    const iconBox = $('result-icon');
     const btn = $('btn-result');
-    icon.className = 'result-icon';
+    iconBox.className = 'result-icon';
 
     if (g.phase === 'levelCleared') {
       const lost = g.livesLostThisLevel;
       const clean = lost === 0;
-      icon.classList.add(clean ? 'good' : 'bad');
-      icon.textContent = clean ? '✓' : '♥';
+      iconBox.classList.add(clean ? 'good' : 'bad');
+      iconBox.replaceChildren(icon(clean ? 'check' : 'heart'));
       $('result-title').textContent = clean
         ? `Level ${g.level} cleared`
         : `Level ${g.level} survived`;
       const reward = g.lastReward === 'life'
-        ? ' You earned an extra life ♥'
+        ? ' You earned an extra life.'
         : g.lastReward === 'shuriken'
-          ? ' You earned a shuriken ✦'
+          ? ' You earned a shuriken.'
           : '';
       $('result-body').textContent = (clean
         ? 'Not a card out of place.'
@@ -453,16 +577,16 @@
       btn.textContent = `Start level ${g.level + 1}`;
       btn.onclick = () => send({ type: 'nextLevel' });
     } else if (g.phase === 'won') {
-      icon.classList.add('win');
-      icon.textContent = '★';
+      iconBox.classList.add('win');
+      iconBox.replaceChildren(icon('trophy'));
       $('result-title').textContent = 'You beat The Mind';
       $('result-body').textContent = `All ${g.maxLevel} levels cleared. That was genuinely telepathic.`;
       btn.textContent = state.you.isHost ? 'Play again' : 'Waiting for the host…';
       btn.disabled = !state.you.isHost;
       btn.onclick = () => send({ type: 'playAgain' });
     } else {
-      icon.classList.add('bad');
-      icon.textContent = '✕';
+      iconBox.classList.add('bad');
+      iconBox.replaceChildren(icon('x'));
       const outOfTime = g.lostTo === 'time';
       $('result-title').textContent = outOfTime ? 'Out of time' : 'Out of lives';
       $('result-body').textContent = outOfTime
@@ -514,9 +638,14 @@
   codeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doJoin(); });
   nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') nameInput.blur(); });
 
+  let copiedTimer;
   $('room-code').addEventListener('click', async () => {
+    const node = $('room-code');
     try {
       await navigator.clipboard.writeText(state?.code ?? '');
+      node.classList.add('copied');
+      clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => node.classList.remove('copied'), 1600);
       toast('Room code copied.');
     } catch {
       toast('Copy it manually: ' + (state?.code ?? ''));
