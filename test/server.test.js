@@ -157,6 +157,14 @@ test('a level plays out and both clients agree on the result', async () => {
 
   first.send({ type: 'play', card: firstCard });
   await second.state((m) => m.game?.topCard === firstCard);
+
+  // The pile can't be raced: right on the heels of the first play, the
+  // second is still inside the 1s cooldown.
+  second.send({ type: 'play', card: secondCard });
+  const tooSoon = await second.next((m) => m.type === 'error');
+  assert.match(tooSoon.message, /wait/i);
+
+  await new Promise((r) => setTimeout(r, 1050)); // clear the cooldown
   second.send({ type: 'play', card: secondCard });
 
   const done = await host.state((m) => m.game?.phase === 'levelCleared');

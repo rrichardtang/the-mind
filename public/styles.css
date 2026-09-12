@@ -11,7 +11,9 @@
              tinted button, so nothing on screen glows.
              --danger and --signal are not decoration; they are the two
              resources the rules define (lives, shurikens) and they are
-             used for nothing else.
+             used for nothing else. --time (blue) marks the one thing
+             that isn't a resource but still needs to read at a glance:
+             the countdown clock.
 
    SHAPE     Radius scales with the surface: pills for status, 10px for
              a card in your hand, 14px for controls, 20px for the big
@@ -69,6 +71,9 @@
   --signal: #f5a524;
   --signal-dim: #f5a52426;
   --signal-ring: #f5a5244d;
+  --time: #4f9eff;
+  --time-dim: #4f9eff26;
+  --time-ring: #4f9eff4d;
 
   /* Radius scales with the surface it wraps */
   --r-pill: 999px;
@@ -514,17 +519,19 @@ input:focus {
   gap: 5px;
   padding: 4px 10px;
   border-radius: var(--r-pill);
-  border: 1px solid var(--line);
+  border: 1px solid var(--time-ring);
+  background: var(--time-dim);
   font-size: 0.84rem;
   font-weight: 550;
-  color: var(--fg-2);
-  transition: color var(--t-2) var(--ease), border-color var(--t-2) var(--ease);
+  color: var(--time);
+  transition: color var(--t-2) var(--ease), border-color var(--t-2) var(--ease),
+    background var(--t-2) var(--ease);
 }
 .hud-timer .i { width: 9px; height: 9px; display: none; }
-.hud-timer.paused { color: var(--fg-3); border-style: dashed; }
+.hud-timer.paused { color: var(--fg-3); border-color: var(--line); background: none; border-style: dashed; }
 .hud-timer.paused .i { display: block; }
-/* Below a quarter of the level's own budget the clock becomes the loudest
-   thing in the HUD. */
+/* Below a quarter of the level's own budget the clock escalates from its
+   resting blue to the loudest thing in the HUD. */
 .hud-timer.urgent {
   color: var(--danger);
   border-color: var(--danger);
