@@ -11,6 +11,7 @@ import {
   viewFor,
   levelsFor,
   SECONDS_PER_CARD,
+  PLAY_COOLDOWN_MS,
 } from '../server/game.js';
 
 const IDS = ['a', 'b', 'c'];
@@ -156,11 +157,37 @@ test('playing a card clears any pending shuriken votes', () => {
   assert.deepEqual(g.starVotes, []);
 });
 
+test('a card cannot be played within a second of the last one', () => {
+  const g = staged({ a: [5, 40], b: [20], c: [70] });
+  assert.equal(playCard(g, 'a', 5, nameOf, 0).ok, true);
+  const blocked = playCard(g, 'b', 20, nameOf, 500);
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.error, /wait/i);
+  assert.deepEqual(g.hands.b, [20], 'the rejected attempt never touched the hand');
+  assert.equal(playCard(g, 'b', 20, nameOf, 1000).ok, true, 'a full cooldown later is fine');
+});
+
+test('the play cooldown resets on each new level', () => {
+  const g = staged({ a: [5], b: [20], c: [70] });
+  playCard(g, 'a', 5, nameOf, 0);
+  playCard(g, 'b', 20, nameOf, 1000);
+  playCard(g, 'c', 70, nameOf, 2000);
+  assert.equal(g.phase, 'levelCleared');
+
+  nextLevel(g);
+  g.hands = { a: [1, 2], b: [3, 4], c: [5, 6] };
+  IDS.forEach((id) => setReady(g, id, IDS));
+  // Same instant as the previous level's last play, yet allowed: the new
+  // level's cooldown starts clean rather than carrying the old one over.
+  assert.equal(playCard(g, 'a', 1, nameOf, 2000).ok, true);
+});
+
 test('clearing a level deals the next one and re-arms the ready gate', () => {
   const g = staged({ a: [5], b: [20], c: [70] });
-  playCard(g, 'a', 5, nameOf);
-  playCard(g, 'b', 20, nameOf);
-  playCard(g, 'c', 70, nameOf);
+  let t = 0;
+  playCard(g, 'a', 5, nameOf, (t += PLAY_COOLDOWN_MS));
+  playCard(g, 'b', 20, nameOf, (t += PLAY_COOLDOWN_MS));
+  playCard(g, 'c', 70, nameOf, (t += PLAY_COOLDOWN_MS));
   assert.equal(g.phase, 'levelCleared');
 
   nextLevel(g);
@@ -176,18 +203,20 @@ test('clearing level 2 awards a shuriken and level 3 a life', () => {
   const g = staged({ a: [5], b: [20], c: [70] });
   g.level = 2;
   g.shurikens = 1;
-  playCard(g, 'a', 5, nameOf);
-  playCard(g, 'b', 20, nameOf);
-  playCard(g, 'c', 70, nameOf);
+  let t = 0;
+  playCard(g, 'a', 5, nameOf, (t += PLAY_COOLDOWN_MS));
+  playCard(g, 'b', 20, nameOf, (t += PLAY_COOLDOWN_MS));
+  playCard(g, 'c', 70, nameOf, (t += PLAY_COOLDOWN_MS));
   assert.equal(g.shurikens, 2);
   assert.equal(g.lastReward, 'shuriken');
 
   const h = staged({ a: [5], b: [20], c: [70] });
   h.level = 3;
   h.lives = 1;
-  playCard(h, 'a', 5, nameOf);
-  playCard(h, 'b', 20, nameOf);
-  playCard(h, 'c', 70, nameOf);
+  let t2 = 0;
+  playCard(h, 'a', 5, nameOf, (t2 += PLAY_COOLDOWN_MS));
+  playCard(h, 'b', 20, nameOf, (t2 += PLAY_COOLDOWN_MS));
+  playCard(h, 'c', 70, nameOf, (t2 += PLAY_COOLDOWN_MS));
   assert.equal(h.lives, 2);
   assert.equal(h.lastReward, 'life');
 });
@@ -196,9 +225,10 @@ test('rewards respect the caps', () => {
   const g = staged({ a: [5], b: [20], c: [70] });
   g.level = 3;
   g.lives = 5;
-  playCard(g, 'a', 5, nameOf);
-  playCard(g, 'b', 20, nameOf);
-  playCard(g, 'c', 70, nameOf);
+  let t = 0;
+  playCard(g, 'a', 5, nameOf, (t += PLAY_COOLDOWN_MS));
+  playCard(g, 'b', 20, nameOf, (t += PLAY_COOLDOWN_MS));
+  playCard(g, 'c', 70, nameOf, (t += PLAY_COOLDOWN_MS));
   assert.equal(g.lives, 5);
   assert.equal(g.lastReward, null);
 });
@@ -206,9 +236,10 @@ test('rewards respect the caps', () => {
 test('clearing the final level wins the run', () => {
   const g = staged({ a: [5], b: [20], c: [70] });
   g.level = g.maxLevel;
-  playCard(g, 'a', 5, nameOf);
-  playCard(g, 'b', 20, nameOf);
-  playCard(g, 'c', 70, nameOf);
+  let t = 0;
+  playCard(g, 'a', 5, nameOf, (t += PLAY_COOLDOWN_MS));
+  playCard(g, 'b', 20, nameOf, (t += PLAY_COOLDOWN_MS));
+  playCard(g, 'c', 70, nameOf, (t += PLAY_COOLDOWN_MS));
   assert.equal(g.phase, 'won');
   assert.equal(nextLevel(g), undefined);
   assert.equal(g.level, g.maxLevel, 'nextLevel is a no-op after a win');
@@ -241,9 +272,10 @@ test('lives lost are tracked per level and reset on the next deal', () => {
 
 test('a clean level reports no lives lost', () => {
   const g = staged({ a: [5], b: [20], c: [70] });
-  playCard(g, 'a', 5, nameOf);
-  playCard(g, 'b', 20, nameOf);
-  playCard(g, 'c', 70, nameOf);
+  let t = 0;
+  playCard(g, 'a', 5, nameOf, (t += PLAY_COOLDOWN_MS));
+  playCard(g, 'b', 20, nameOf, (t += PLAY_COOLDOWN_MS));
+  playCard(g, 'c', 70, nameOf, (t += PLAY_COOLDOWN_MS));
   assert.equal(g.phase, 'levelCleared');
   assert.equal(g.livesLostThisLevel, 0);
 });
@@ -275,9 +307,10 @@ test('clearing a level stops the clock, and the next level restarts it', () => {
   const g = timedGame();
   IDS.forEach((id) => setReady(g, id, IDS));
   g.hands = { a: [5], b: [20], c: [70] };
-  playCard(g, 'a', 5, nameOf);
-  playCard(g, 'b', 20, nameOf);
-  playCard(g, 'c', 70, nameOf);
+  let t = 0;
+  playCard(g, 'a', 5, nameOf, (t += PLAY_COOLDOWN_MS));
+  playCard(g, 'b', 20, nameOf, (t += PLAY_COOLDOWN_MS));
+  playCard(g, 'c', 70, nameOf, (t += PLAY_COOLDOWN_MS));
   assert.equal(g.phase, 'levelCleared');
   assert.equal(g.deadlineAt, null);
 
@@ -321,9 +354,10 @@ test('a won run cannot then time out', () => {
   IDS.forEach((id) => setReady(g, id, IDS));
   g.level = g.maxLevel;
   g.hands = { a: [5], b: [20], c: [70] };
-  playCard(g, 'a', 5, nameOf);
-  playCard(g, 'b', 20, nameOf);
-  playCard(g, 'c', 70, nameOf);
+  let t = 0;
+  playCard(g, 'a', 5, nameOf, (t += PLAY_COOLDOWN_MS));
+  playCard(g, 'b', 20, nameOf, (t += PLAY_COOLDOWN_MS));
+  playCard(g, 'c', 70, nameOf, (t += PLAY_COOLDOWN_MS));
   assert.equal(g.phase, 'won');
   checkTimeout(g, Date.now() + 10 * 60 * 60 * 1000);
   assert.equal(g.phase, 'won');

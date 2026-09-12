@@ -8,6 +8,10 @@
 //   * A shuriken may be thrown by unanimous agreement: everyone discards their
 //     lowest card face up.
 //   * Lives at 0 -> the run is lost. Finishing the last level -> the run is won.
+//
+// House rule (not in the printed rules): a played card is followed by a
+// cooldown before the next one is accepted, so the pile can't be solved by
+// mashing "play" the instant it's legal. See PLAY_COOLDOWN_MS.
 
 export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 6;
@@ -27,6 +31,10 @@ const REWARDS = { 2: 'shuriken', 3: 'life', 5: 'shuriken', 6: 'life', 8: 'shurik
 // Optional per-level clock: this many seconds for every card dealt this level,
 // so the pressure scales with the hands on the table. Edit here to retune it.
 export const SECONDS_PER_CARD = 20;
+
+// Minimum gap between any two accepted card plays, whoever they're from.
+// Edit here to retune it.
+export const PLAY_COOLDOWN_MS = 1000;
 
 // Playful trash-talk shown to whoever caused a mistake, and to whoever was
 // holding one of the burned cards. Edit here to retune the voice/rotation.
@@ -76,6 +84,7 @@ export function createGame(playerIds, { timed = false, secondsPerCard = SECONDS_
     phase: 'ready', // ready | playing | levelCleared | won | lost
     timed,
     msPerCard: secondsPerCard * 1000,
+    lastPlayAt: null, // epoch ms of the last accepted play; gates the next one
     // A level's clock is either running (deadlineAt, epoch ms) or paused
     // (msLeft), never both: armClock is the only thing that sets either.
     deadlineAt: null,
@@ -104,6 +113,7 @@ function dealLevel(game) {
   game.starVotes = [];
   game.livesLostThisLevel = 0;
   game.phase = 'ready';
+  game.lastPlayAt = null;
   clearClock(game);
 }
 
@@ -167,12 +177,16 @@ export function setReady(game, playerId, activeIds, now = Date.now()) {
  * Play a card. Only a player's lowest card is ever playable, since holding a
  * lower card back is always a mistake against yourself.
  */
-export function playCard(game, playerId, card, nameOf) {
+export function playCard(game, playerId, card, nameOf, now = Date.now()) {
   if (game.phase !== 'playing') return { ok: false, error: 'The level has not started yet.' };
+  if (game.lastPlayAt != null && now - game.lastPlayAt < PLAY_COOLDOWN_MS) {
+    return { ok: false, error: 'Wait a beat before the next card.' };
+  }
   const hand = game.hands[playerId] ?? [];
   if (!hand.includes(card)) return { ok: false, error: 'That card is not in your hand.' };
   if (card !== hand[0]) return { ok: false, error: 'You can only play your lowest card.' };
 
+  game.lastPlayAt = now;
   const lowest = lowestOutstanding(game);
   hand.shift();
   game.pile.push({ card, playerId });
