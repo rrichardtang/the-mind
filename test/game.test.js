@@ -12,6 +12,8 @@ import {
   levelsFor,
   SECONDS_PER_CARD,
   PLAY_COOLDOWN_MS,
+  MAX_LIVES,
+  MAX_PLAYERS,
 } from '../server/game.js';
 
 const IDS = ['a', 'b', 'c'];
@@ -224,12 +226,12 @@ test('clearing level 2 awards a shuriken and level 3 a life', () => {
 test('rewards respect the caps', () => {
   const g = staged({ a: [5], b: [20], c: [70] });
   g.level = 3;
-  g.lives = 5;
+  g.lives = MAX_LIVES;
   let t = 0;
   playCard(g, 'a', 5, nameOf, (t += PLAY_COOLDOWN_MS));
   playCard(g, 'b', 20, nameOf, (t += PLAY_COOLDOWN_MS));
   playCard(g, 'c', 70, nameOf, (t += PLAY_COOLDOWN_MS));
-  assert.equal(g.lives, 5);
+  assert.equal(g.lives, MAX_LIVES);
   assert.equal(g.lastReward, null);
 });
 
@@ -259,6 +261,13 @@ test('a two player game runs 12 levels with 2 lives', () => {
   const g = createGame(['a', 'b']);
   assert.equal(g.maxLevel, 12);
   assert.equal(g.lives, 2);
+});
+
+test('a full table never starts above the lives cap', () => {
+  const ids = Array.from({ length: MAX_PLAYERS }, (_, i) => `p${i}`);
+  const g = createGame(ids);
+  assert.equal(g.lives, MAX_PLAYERS, 'still one life per player');
+  assert.ok(g.lives <= MAX_LIVES, 'never starts already past the cap');
 });
 
 test('lives lost are tracked per level and reset on the next deal', () => {

@@ -15,7 +15,9 @@
 
 export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 6;
-export const MAX_LIVES = 5;
+// A game starts with one life per player (see createGame below), so the cap
+// on gaining more can never sit below a full table's starting count.
+export const MAX_LIVES = MAX_PLAYERS;
 export const MAX_SHURIKENS = 4;
 const DECK_SIZE = 100;
 
