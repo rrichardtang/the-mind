@@ -168,13 +168,27 @@ const lowestOutstanding = (game) => Math.min(...cardsLeft(game));
 const stalled = (game, activeIds) => game.playerIds.some((id) => !activeIds.includes(id));
 
 /**
+ * Whether everybody still here has put their name to something. Every gate in
+ * the game is this shape — ready, shuriken, ending a stalled run, stepping away
+ * from a lost one — and none of them ever waits on a player who is gone. An
+ * empty room agrees to nothing.
+ */
+const unanimous = (activeIds, votes) => activeIds.length > 0 && activeIds.every((id) => votes.includes(id));
+
+/** Cast or take back a vote. Taking one back is what you do when the table changes. */
+function toggleVote(votes, playerId) {
+  const i = votes.indexOf(playerId);
+  if (i >= 0) votes.splice(i, 1);
+  else votes.push(playerId);
+}
+
+/**
  * Begin the level once everyone still here has said ready. Driven both by the
  * last player tapping ready and by settleGates, because the table can also
  * become all-ready by somebody leaving it.
  */
 function startIfReady(game, activeIds, now) {
-  if (game.phase !== 'ready' || activeIds.length === 0) return;
-  if (!activeIds.every((id) => game.ready.includes(id))) return;
+  if (game.phase !== 'ready' || !unanimous(activeIds, game.ready)) return;
   game.phase = 'playing';
   // The clock only starts once play does — the ready gate is untimed.
   if (game.timed) armClock(game, levelBudget(game), now);
@@ -277,7 +291,7 @@ export function settleGates(game, activeIds, now = Date.now()) {
   // is back it goes, so a vote taken during an outage can never end a run that
   // recovered from it.
   if (!stalled(game, activeIds)) game.endVotes = [];
-  else if (activeIds.length > 0 && activeIds.every((id) => game.endVotes.includes(id))) return true;
+  if (unanimous(activeIds, game.endVotes)) return true;
 
   // A phone that dies before tapping ready must not hold the level back for
   // everyone who did: the gate re-settles whenever the table changes, the same
@@ -290,7 +304,7 @@ export function settleGates(game, activeIds, now = Date.now()) {
     if (owed.length === 0) resolveMistake(game);
     return false;
   }
-  return game.phase === 'lost' && activeIds.length > 0 && activeIds.every((id) => game.done.includes(id));
+  return game.phase === 'lost' && unanimous(activeIds, game.done);
 }
 
 /** Both players have owned the mistake: let its consequences land. */
@@ -311,9 +325,7 @@ export function toggleEndVote(game, playerId, activeIds) {
   if (game.phase === 'won' || game.phase === 'lost') return { ok: false, error: 'The run is already over.' };
   if (!stalled(game, activeIds)) return { ok: false, error: 'Everyone is here — the run can carry on.' };
 
-  const i = game.endVotes.indexOf(playerId);
-  if (i >= 0) game.endVotes.splice(i, 1);
-  else game.endVotes.push(playerId);
+  toggleVote(game.endVotes, playerId);
   return { ok: true };
 }
 
@@ -323,13 +335,8 @@ export function toggleStarVote(game, playerId, activeIds, nameOf) {
   if (game.phase !== 'playing') return { ok: false, error: 'The level has not started yet.' };
   if (game.shurikens <= 0) return { ok: false, error: 'No shurikens left.' };
 
-  const i = game.starVotes.indexOf(playerId);
-  if (i >= 0) game.starVotes.splice(i, 1);
-  else game.starVotes.push(playerId);
-
-  if (activeIds.length > 0 && activeIds.every((id) => game.starVotes.includes(id))) {
-    throwStar(game, nameOf);
-  }
+  toggleVote(game.starVotes, playerId);
+  if (unanimous(activeIds, game.starVotes)) throwStar(game, nameOf);
   return { ok: true };
 }
 

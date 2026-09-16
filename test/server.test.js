@@ -513,15 +513,7 @@ async function startedRoom(options = {}, url) {
   host.send({ type: 'start', ...options });
   const started = await host.state((m) => m.game);
   const guestStarted = await guest.state((m) => m.game);
-  return {
-    host,
-    guest,
-    started,
-    guestStarted,
-    guestHand: guestStarted.game.hand,
-    code,
-    guestId: guestJoin.playerId,
-  };
+  return { host, guest, started, guestStarted, code, guestId: guestJoin.playerId };
 }
 
 /** Both players say ready, and the level is under way on both clients. */
@@ -575,7 +567,7 @@ test('leaving the lobby frees the seat and hands the room on', async () => {
 });
 
 test('stepping away from behind a gate holds the seat, and the run waits', async () => {
-  const { host, guest, started, guestHand, code, guestId } = await startedRoom();
+  const { host, guest, started, guestStarted, code, guestId } = await startedRoom();
   assert.equal(started.game.phase, 'ready', 'the level has not begun, so no card can be played');
   host.send({ type: 'ready' });
   await guest.state((m) => m.game?.ready.length === 1);
@@ -592,7 +584,7 @@ test('stepping away from behind a gate holds the seat, and the run waits', async
   back.send({ type: 'join', code, name: 'Sam', playerId: guestId });
   const rejoined = await back.state((m) => m.game?.seats.every((s) => s.connected));
   assert.equal(rejoined.you.id, guestId, 'the same seat, not a new one');
-  assert.deepEqual(rejoined.game.hand, guestHand, 'and the same cards');
+  assert.deepEqual(rejoined.game.hand, guestStarted.game.hand, 'and the same cards');
 
   host.close();
   back.close();
