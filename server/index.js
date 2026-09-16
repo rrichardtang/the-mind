@@ -10,6 +10,7 @@ import {
   setReady,
   playCard,
   toggleStarVote,
+  toggleEndVote,
   acknowledgeMistake,
   dismissRun,
   settleGates,
@@ -133,7 +134,7 @@ function syncTimer(room, now) {
  */
 function settleRoom(room, now) {
   if (!room.game) return;
-  if (settleGates(room.game, activeIds(room))) return endGame(room);
+  if (settleGates(room.game, activeIds(room), now)) return endGame(room);
   // A disconnected player's cards cannot be played by anyone, and an
   // unacknowledged mistake stops play outright: either way a timed level would
   // run down through no fault of the table, so the clock waits too.
@@ -159,11 +160,6 @@ function broadcast(room) {
   for (const p of room.players.values()) {
     if (p.connected) send(p.ws, roomState(room, p.id, now));
   }
-}
-
-/** A one-off line for everyone still in the room, said outside the game state. */
-function announce(room, message) {
-  for (const p of room.players.values()) if (p.connected) send(p.ws, { type: 'notice', message });
 }
 
 const nameOfIn = (room) => (id) => room.players.get(id)?.name ?? 'Player';
@@ -246,59 +242,32 @@ function joinRoom(ws, ctx, room, name, playerId) {
   broadcast(room);
 }
 
-/** Take a seat out of the room for good, handing the room on if it was the host's. */
-function removeSeat(room, playerId) {
-  room.players.delete(playerId);
-  if (room.hostId === playerId) room.hostId = room.players.keys().next().value ?? null;
-}
-
 /**
  * Give up a seat. Before the game starts the seat is freed outright; mid-game it
- * is held open so a dropped phone can come back to the same hand.
+ * is held open so a dropped phone — or a player who stepped away on purpose —
+ * can come back to the same hand.
  */
 function dropSeat(room, playerId) {
   const player = room.players.get(playerId);
   if (!player) return;
   player.connected = false;
   player.ws = null;
-  if (!room.game) removeSeat(room, playerId);
+  if (!room.game) {
+    room.players.delete(playerId);
+    if (room.hostId === playerId) room.hostId = room.players.keys().next().value ?? null;
+  }
   if (room.players.size === 0) deleteRoom(room);
   else broadcast(room);
 }
 
-/**
- * Walk out on purpose. The seat goes for good, which a dropped connection never
- * does mid-game — and a run still being played cannot survive that: the hand
- * leaves with the player and nobody else can play it, so the whole table drops
- * back to the lobby. A run that is already won or lost is the table's to sit
- * with, so leaving one only frees the seat.
- */
-function quitSeat(room, playerId) {
-  const player = room.players.get(playerId);
-  if (!player) return;
-  const midRun = room.game && room.game.phase !== 'won' && room.game.phase !== 'lost';
-  const name = player.name;
-  removeSeat(room, playerId);
-  if (room.players.size === 0) return deleteRoom(room);
-  if (midRun) {
-    endGame(room);
-    announce(room, `${name} left the room. The run is over.`);
-  }
-  broadcast(room);
-}
-
-/**
- * Release whatever seat this socket is holding, if it is still the owner.
- * `forGood` is a deliberate walk-out rather than a connection that dropped.
- */
-function leaveCurrentRoom(ws, ctx, forGood = false) {
+/** Release whatever seat this socket is holding, if it is still the owner. */
+function leaveCurrentRoom(ws, ctx) {
   const { room, playerId } = ctx;
   ctx.room = null;
   ctx.playerId = null;
   if (!room || !playerId) return;
   if (room.players.get(playerId)?.ws !== ws) return; // superseded by a reconnect
-  if (forGood) quitSeat(room, playerId);
-  else dropSeat(room, playerId);
+  dropSeat(room, playerId);
 }
 
 /** Host eviction: the seat goes for good, and the player is told why. */
@@ -337,11 +306,6 @@ function handleMessage(ws, ctx, msg) {
       return handleCreate(ws, ctx, msg);
     case 'join':
       return handleJoin(ws, ctx, msg);
-
-    // Saying so is the only way out that frees the seat: a socket that merely
-    // closes reads as a phone that dropped, which mid-game holds it open.
-    case 'leave':
-      return leaveCurrentRoom(ws, ctx, true);
 
     case 'start': {
       const room = ctx.room;
@@ -383,6 +347,14 @@ function handleMessage(ws, ctx, msg) {
       if (!room) return;
       dismissRun(room.game, ctx.playerId);
       return broadcast(room); // the last one out ends the run, from settleRoom
+    }
+
+    case 'endRun': {
+      const room = requireGame(ws, ctx);
+      if (!room) return;
+      const result = toggleEndVote(room.game, ctx.playerId, activeIds(room));
+      if (!result.ok) return fail(ws, result.error);
+      return broadcast(room); // unanimity is settled in broadcast, like the other gates
     }
 
     case 'star': {

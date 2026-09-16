@@ -87,6 +87,9 @@ export function createGame(playerIds, { timed = false, secondsPerCard = SECONDS_
     lostTo: null, // 'lives' | 'time', once the run is lost
     ready: [],
     starVotes: [],
+    // Who has agreed to end a run stalled on somebody who is not here. Only
+    // ever populated while the table is stalled; settleGates owns clearing it.
+    endVotes: [],
     // Set exactly while the phase is 'mistake', and never otherwise: the two
     // players a mistake happened between, and which of them has owned it.
     mistake: null,
@@ -157,17 +160,32 @@ function log(game, kind, text, extra = {}) {
 const cardsLeft = (game) => game.playerIds.flatMap((id) => game.hands[id] ?? []);
 const lowestOutstanding = (game) => Math.min(...cardsLeft(game));
 
+/**
+ * Whether the run is waiting on somebody who is not here. Nobody else can play
+ * their cards, so the level cannot be finished until they are back — which is
+ * the only situation in which ending the run early is offered at all.
+ */
+const stalled = (game, activeIds) => game.playerIds.some((id) => !activeIds.includes(id));
+
+/**
+ * Begin the level once everyone still here has said ready. Driven both by the
+ * last player tapping ready and by settleGates, because the table can also
+ * become all-ready by somebody leaving it.
+ */
+function startIfReady(game, activeIds, now) {
+  if (game.phase !== 'ready' || activeIds.length === 0) return;
+  if (!activeIds.every((id) => game.ready.includes(id))) return;
+  game.phase = 'playing';
+  // The clock only starts once play does — the ready gate is untimed.
+  if (game.timed) armClock(game, levelBudget(game), now);
+  log(game, 'level', `Level ${game.level}. Concentrate.`);
+}
+
 /** Mark a player ready for the current level. Everyone ready -> level begins. */
 export function setReady(game, playerId, activeIds, now = Date.now()) {
   if (game.phase !== 'ready') return;
   if (!game.ready.includes(playerId)) game.ready.push(playerId);
-  const allReady = activeIds.every((id) => game.ready.includes(id));
-  if (allReady && activeIds.length > 0) {
-    game.phase = 'playing';
-    // The clock only starts once play does — the ready gate is untimed.
-    if (game.timed) armClock(game, levelBudget(game), now);
-    log(game, 'level', `Level ${game.level}. Concentrate.`);
-  }
+  startIfReady(game, activeIds, now);
 }
 
 /**
@@ -247,13 +265,25 @@ export function dismissRun(game, playerId) {
 
 /**
  * Resolve whatever the table is waiting on, given who is still connected.
- * Both gates only ever wait on players who are actually here: a phone that
+ * Every gate only ever waits on players who are actually here: a phone that
  * dies behind one must not freeze the room for everybody else.
  *
- * Returns true once everyone has stepped away from a lost run — the room's
- * cue to clear the game away.
+ * Returns true once the room should clear the game away — either everyone has
+ * stepped away from a lost run, or everyone still here has agreed to end one
+ * that cannot be finished.
  */
-export function settleGates(game, activeIds) {
+export function settleGates(game, activeIds, now = Date.now()) {
+  // The vote to end belongs to the stall that prompted it. The moment everyone
+  // is back it goes, so a vote taken during an outage can never end a run that
+  // recovered from it.
+  if (!stalled(game, activeIds)) game.endVotes = [];
+  else if (activeIds.length > 0 && activeIds.every((id) => game.endVotes.includes(id))) return true;
+
+  // A phone that dies before tapping ready must not hold the level back for
+  // everyone who did: the gate re-settles whenever the table changes, the same
+  // way the mistake gate below does.
+  startIfReady(game, activeIds, now);
+
   if (game.phase === 'mistake') {
     const { culprit, victim, acks } = game.mistake;
     const owed = [culprit, victim].filter((id) => activeIds.includes(id) && !acks.includes(id));
@@ -269,6 +299,22 @@ function resolveMistake(game) {
   game.phase = 'playing';
   if (game.lives === 0) return loseRun(game, 'lives', 'Out of lives. The run is over.');
   checkLevelEnd(game);
+}
+
+/**
+ * Vote to end a run the table cannot finish, because a player is away and their
+ * cards are unplayable by anyone else. It takes everyone who is still here, so
+ * a run is never ended over somebody's head — and a vote can be taken back,
+ * which is what you do when the missing phone comes back to life.
+ */
+export function toggleEndVote(game, playerId, activeIds) {
+  if (game.phase === 'won' || game.phase === 'lost') return { ok: false, error: 'The run is already over.' };
+  if (!stalled(game, activeIds)) return { ok: false, error: 'Everyone is here — the run can carry on.' };
+
+  const i = game.endVotes.indexOf(playerId);
+  if (i >= 0) game.endVotes.splice(i, 1);
+  else game.endVotes.push(playerId);
+  return { ok: true };
 }
 
 /** Vote to throw a shuriken. Unanimous among connected players -> it lands. */
@@ -395,6 +441,7 @@ export function viewFor(game, playerId, players, now = Date.now()) {
     livesLostThisLevel: game.livesLostThisLevel,
     ready: game.ready,
     starVotes: game.starVotes,
+    endVotes: game.endVotes,
     mistake: mistakeView(game, playerId, players),
     done: game.done,
     log: game.log.slice(-12),

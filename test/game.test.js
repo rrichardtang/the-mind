@@ -5,6 +5,7 @@ import {
   setReady,
   playCard,
   toggleStarVote,
+  toggleEndVote,
   acknowledgeMistake,
   dismissRun,
   settleGates,
@@ -188,6 +189,27 @@ test('a player who is gone is not waited on', () => {
   assert.equal(g.phase, 'playing', 'the table is not frozen behind an empty seat');
 });
 
+test('the ready gate does not hang on a phone that died before tapping ready', () => {
+  const g = createGame(IDS);
+  setReady(g, 'a', IDS);
+  setReady(g, 'b', IDS);
+  assert.equal(g.phase, 'ready', 'C has not said ready');
+
+  // C's phone dies without ever tapping. Nobody is going to tap it for them,
+  // and A and B have no ready button left to press.
+  settleGates(g, ['a', 'b']);
+  assert.equal(g.phase, 'playing', 'the table that is here gets on with it');
+});
+
+test('the ready gate still waits on everyone who is actually here', () => {
+  const g = createGame(IDS);
+  setReady(g, 'a', IDS);
+  settleGates(g, ['a', 'b']);
+  assert.equal(g.phase, 'ready', 'B is here and has not said ready');
+  settleGates(g, []);
+  assert.equal(g.phase, 'ready', 'an empty room starts nothing');
+});
+
 test('the next level is dealt without a mistake hanging over it', () => {
   const g = staged({ a: [50], b: [10], c: [30] });
   playCard(g, 'a', 50, nameOf);
@@ -235,6 +257,68 @@ test('a run still being played is never dismissed', () => {
   dismissRun(g, 'a');
   assert.deepEqual(g.done, []);
   assert.equal(settleGates(g, IDS), false);
+});
+
+/* ── Ending a run stalled on somebody who is away ───────── */
+
+test('a run stalled on a missing player is ended by everyone still here', () => {
+  const g = staged({ a: [5], b: [20], c: [70] });
+  const here = ['a', 'c']; // B's phone is gone, and nobody else can play B's 20
+
+  assert.equal(toggleEndVote(g, 'a', here).ok, true);
+  assert.deepEqual(g.endVotes, ['a']);
+  assert.equal(settleGates(g, here), false, 'C has not agreed');
+
+  assert.equal(toggleEndVote(g, 'c', here).ok, true);
+  assert.equal(settleGates(g, here), true, 'the table agreed, so the room clears the run away');
+});
+
+test('a run everybody is present for cannot be voted away', () => {
+  const g = staged({ a: [5], b: [20], c: [70] });
+  const result = toggleEndVote(g, 'a', IDS);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Everyone is here/);
+  assert.deepEqual(g.endVotes, []);
+});
+
+test('a vote to end is dropped the moment the missing player comes back', () => {
+  const g = staged({ a: [5], b: [20], c: [70] });
+  toggleEndVote(g, 'a', ['a', 'c']);
+  toggleEndVote(g, 'c', ['a', 'c']);
+
+  // B reconnects in the same breath: the stall is over, so the vote is too.
+  assert.equal(settleGates(g, IDS), false, 'a recovered run is never ended by an old vote');
+  assert.deepEqual(g.endVotes, []);
+  assert.equal(g.phase, 'playing');
+});
+
+test('a vote to end can be taken back', () => {
+  const g = staged({ a: [5], b: [20], c: [70] });
+  const here = ['a', 'c'];
+  toggleEndVote(g, 'a', here);
+  toggleEndVote(g, 'a', here);
+  assert.deepEqual(g.endVotes, []);
+  assert.equal(settleGates(g, here), false);
+});
+
+test('a finished run is left alone by the vote that ends a stalled one', () => {
+  const g = staged({ a: [90], b: [1], c: [2] });
+  g.lives = 1;
+  playCard(g, 'a', 90, nameOf);
+  ownUp(g);
+  assert.equal(g.phase, 'lost');
+
+  const result = toggleEndVote(g, 'a', ['a', 'c']);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /already over/);
+  assert.deepEqual(g.endVotes, [], 'a lost run is stepped away from, not voted away');
+});
+
+test('the view carries the vote so every client can see it building', () => {
+  const g = staged({ a: [5], b: [20], c: [70] });
+  toggleEndVote(g, 'a', ['a', 'c']);
+  const players = new Map(IDS.map((id) => [id, { name: nameOf(id), connected: id !== 'b' }]));
+  assert.deepEqual(viewFor(g, 'c', players).endVotes, ['a']);
 });
 
 test('a shuriken needs unanimous votes and discards each lowest card', () => {

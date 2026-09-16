@@ -61,7 +61,7 @@ one pile in **ascending order — without communicating**. No talking, no gestur
 - Clearing certain levels earns a bonus life or shuriken.
 - **Timed levels** are optional — the host ticks the box in the lobby before starting. Each level
   then gives you 20 seconds per card dealt (`20 × players × level`), and letting the clock reach
-  zero ends the whole run, not just a life. The clock stops while anyone is disconnected.
+  zero ends the whole run, not just a life. The clock stops while anyone is away.
 - Lives hit zero and the run ends. Clear the last level and you've beaten The Mind.
 - A lost run stays on screen. Nobody is sent back to the lobby when somebody else has had enough:
   each player taps **Back to the lobby** in their own time, and the room drops back once the last
@@ -97,22 +97,27 @@ different clock for real games.
 
 ## Notes
 
-- **Leaving.** The way out is one tap from anywhere: **Leave room** in the lobby, and the ✕ in
-  the corner of the game — which rides above the ready and mistake gates, so waiting on somebody
-  who is never coming back can't trap you there. Both ask first. Mid-run your seat goes for good
-  and the run ends for the table, because nobody else can play your hand; the room drops back to
-  the lobby and can start again. A run that is already over is only ever yours to leave.
-- **Dropped connection.** A connection that drops is not the same as walking out. Your seat and
-  hand are held open; reopening the page rejoins the same room automatically. Mid-game a
-  disconnected player keeps their seat, so the game can carry on when someone's phone locks. On
-  a timed run the clock pauses while they are away — their cards are unplayable by anyone else,
-  so the level would otherwise be unwinnable — and resumes with the time it had once everyone is
-  back. It pauses behind a mistake for the same reason: nobody can play while the callout is up.
-  No gate ever waits on a player who is gone.
+- **Stepping away.** The way out is one tap from anywhere: **Leave room** in the lobby, and the ✕
+  in the corner of the game — which rides above the ready and mistake gates, so waiting on
+  somebody else can't trap you there. Both ask first. Leaving a lobby frees your seat. Leaving a
+  game does not: it is a step away, exactly like your phone dying. Your seat and your hand are
+  held, the run waits, and the home screen offers the room back whenever you want it. **Nothing
+  a player can tap ends somebody else's run.**
+- **Ending a stalled run.** While anyone is away the table is told so, and offered **End the run**
+  — their cards cannot be played by anyone else, so the run is stuck until they come back. It
+  takes everyone still at the table, the way a shuriken does, and a vote can be taken back; the
+  whole vote is dropped the moment the missing player reappears. Agreeing drops the room to the
+  lobby with everyone who is still there, ready to start again.
+- **Dropped connection.** Your seat and hand are held open; reopening the page rejoins the same
+  room automatically. Mid-game a disconnected player keeps their seat, so the game can carry on
+  when someone's phone locks. On a timed run the clock pauses while they are away — their cards
+  are unplayable by anyone else, so the level would otherwise be unwinnable — and resumes with
+  the time it had once everyone is back. It pauses behind a mistake for the same reason: nobody
+  can play while the callout is up. No gate ever waits on a player who is gone.
 - **Removing a player.** In the lobby the host gets a ✕ beside everyone else; tapping it sends
   that player back to the home screen and frees the seat. It only works before the game starts —
-  once hands are dealt, everyone in the run is needed to finish the level, so the only way out of
-  one is a player leaving of their own accord.
+  once hands are dealt, everyone in the run is needed to finish the level — a run that has lost
+  somebody is ended by the table agreeing to, not by one player removing another.
 - **Rooms** are in-memory and disappear when the server restarts, plus 6 hours after the last
   player leaves. Nothing is persisted, and there are no accounts.
 - **Add to Home Screen** on iOS or Android for a full-screen, app-like game.

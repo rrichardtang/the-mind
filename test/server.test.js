@@ -513,7 +513,15 @@ async function startedRoom(options = {}, url) {
   host.send({ type: 'start', ...options });
   const started = await host.state((m) => m.game);
   const guestStarted = await guest.state((m) => m.game);
-  return { host, guest, started, guestStarted, code, guestId: guestJoin.playerId };
+  return {
+    host,
+    guest,
+    started,
+    guestStarted,
+    guestHand: guestStarted.game.hand,
+    code,
+    guestId: guestJoin.playerId,
+  };
 }
 
 /** Both players say ready, and the level is under way on both clients. */
@@ -522,6 +530,31 @@ async function bothReady(host, guest) {
   guest.send({ type: 'ready' });
   await guest.state((m) => m.game?.phase === 'playing');
   return host.state((m) => m.game?.phase === 'playing');
+}
+
+/**
+ * Three players, mid-level, with every client's queue emptied: a vote needs a
+ * table of more than one to be watched before it carries.
+ */
+async function startedTrio() {
+  const clients = [await Client.open(), await Client.open(), await Client.open()];
+  const [host, guest, third] = clients;
+  host.send({ type: 'create', name: 'Richard' });
+  const { code } = await host.next((m) => m.type === 'joined');
+  const joins = [];
+  for (const [client, name] of [[guest, 'Sam'], [third, 'Pat']]) {
+    client.send({ type: 'join', code, name });
+    joins.push(await client.next((m) => m.type === 'joined'));
+  }
+  await host.state((m) => m.lobby.length === 3);
+  host.send({ type: 'start' });
+  for (const c of clients) {
+    await c.state((m) => m.game);
+    c.send({ type: 'ready' });
+  }
+  for (const c of clients) await c.state((m) => m.game?.phase === 'playing');
+  for (const c of clients) c.drain(); // only what happens next is the test
+  return { host, guest, third, code, guestId: joins[0].playerId };
 }
 
 test('leaving the lobby frees the seat and hands the room on', async () => {
@@ -533,70 +566,112 @@ test('leaving the lobby frees the seat and hands the room on', async () => {
   await guest.next((m) => m.type === 'joined');
   await guest.state((m) => m.lobby.length === 2);
 
-  host.send({ type: 'leave' });
+  host.close();
   const alone = await guest.state((m) => m.lobby.length === 1);
   assert.deepEqual(alone.lobby.map((p) => p.name), ['Sam']);
   assert.equal(alone.you.isHost, true, 'the room goes with the seat');
 
-  host.close();
   guest.close();
 });
 
-test('a player stuck behind a gate can walk out, and the run ends with them', async () => {
-  const { host, guest, started, code, guestId } = await startedRoom();
+test('stepping away from behind a gate holds the seat, and the run waits', async () => {
+  const { host, guest, started, guestHand, code, guestId } = await startedRoom();
   assert.equal(started.game.phase, 'ready', 'the level has not begun, so no card can be played');
   host.send({ type: 'ready' });
   await guest.state((m) => m.game?.ready.length === 1);
 
-  // The other phone never taps ready, and a dropped connection would only hold
-  // the seat open. Saying so is the way out.
-  host.drain();
-  guest.send({ type: 'leave' });
-  assert.match((await host.next((m) => m.type === 'notice')).message, /Sam left the room/);
+  // The other phone walks off from behind the gate. Nothing about the run goes
+  // with it: this is a step away, not a resignation.
+  guest.close();
+  const waiting = await host.state((m) => m.game?.seats.some((s) => !s.connected));
+  assert.deepEqual(waiting.lobby.map((p) => p.name), ['Richard', 'Sam'], 'the seat is held');
+  assert.equal(waiting.game.phase, 'playing', 'and the gate does not hold the level back');
+  assert.equal(waiting.game.seats.find((x) => x.name === 'Sam').cards, 1, 'the hand is still theirs');
 
-  const lobby = await host.state((m) => m.game === null);
-  assert.deepEqual(lobby.lobby.map((p) => p.name), ['Richard'], 'the seat goes with them');
-
-  // The seat really is gone: their old id cannot walk back into it.
   const back = await Client.open();
   back.send({ type: 'join', code, name: 'Sam', playerId: guestId });
-  await back.next((m) => m.type === 'joined');
-  const rejoined = await back.state((m) => m.lobby.length === 2);
-  assert.notEqual(rejoined.you.id, guestId, 'a fresh seat, not the one they walked out of');
-  assert.equal(rejoined.game, null);
+  const rejoined = await back.state((m) => m.game?.seats.every((s) => s.connected));
+  assert.equal(rejoined.you.id, guestId, 'the same seat, not a new one');
+  assert.deepEqual(rejoined.game.hand, guestHand, 'and the same cards');
 
   host.close();
-  guest.close();
   back.close();
 });
 
-test('leaving a finished run frees the seat without pulling the others off it', async () => {
-  const { host, guest } = await startedRoom({ timed: true }, FAST_URL);
+test('the table can agree to end a run stalled on somebody who is gone', async () => {
+  const { host, guest, code } = await startedRoom();
   await bothReady(host, guest);
-  await host.state((m) => m.game?.phase === 'lost');
-  await guest.state((m) => m.game?.phase === 'lost');
 
   host.drain();
-  guest.send({ type: 'leave' });
-  const still = await host.state((m) => m.lobby.length === 1);
-  assert.equal(still.game.phase, 'lost', 'the result is the table’s to sit with');
+  guest.close();
+  const stalled = await host.state((m) => m.game?.seats.some((s) => !s.connected));
+  assert.deepEqual(stalled.game.endVotes, []);
 
-  // And nobody is waiting on them: whoever is left is the whole table.
-  host.send({ type: 'backToLobby' });
+  // One player left at the table is the whole table, so one vote carries.
+  host.send({ type: 'endRun' });
   const lobby = await host.state((m) => m.game === null);
-  assert.deepEqual(lobby.lobby.map((p) => p.name), ['Richard']);
+  assert.deepEqual(lobby.lobby.map((p) => p.name), ['Richard'], 'the empty seat goes with the run');
+
+  // And the room is still there, ready to start again.
+  const back = await Client.open();
+  back.send({ type: 'join', code, name: 'Sam' });
+  await back.next((m) => m.type === 'joined');
+  const fresh = await host.state((m) => m.lobby.length === 2 && m.game === null);
+  assert.deepEqual(fresh.lobby.map((p) => p.name), ['Richard', 'Sam']);
+
+  host.close();
+  back.close();
+});
+
+test('one player cannot end the run while another is still at the table', async () => {
+  const { host, guest, third } = await startedTrio();
+
+  guest.close();
+  await host.state((m) => m.game?.seats.some((s) => !s.connected));
+
+  host.send({ type: 'endRun' });
+  const oneVote = await third.state((m) => m.game?.endVotes.length === 1);
+  assert.equal(oneVote.game.phase, 'playing', 'Pat has not agreed, so the run carries on');
+
+  third.send({ type: 'endRun' });
+  const lobby = await third.state((m) => m.game === null);
+  assert.deepEqual(lobby.lobby.map((p) => p.name), ['Richard', 'Pat'], 'the empty seat goes with the run');
+  await host.state((m) => m.game === null);
 
   host.close();
   guest.close();
+  third.close();
 });
 
-test('leaving a room you were never in is harmless', async () => {
-  const c = await Client.open();
-  c.send({ type: 'leave' });
-  c.send({ type: 'ping' });
-  await c.next((m) => m.type === 'pong');
-  assert.deepEqual(c.queue, [], 'no error came back ahead of the pong');
-  c.close();
+test('a vote to end is dropped when the missing player comes back', async () => {
+  const { host, guest, third, code, guestId } = await startedTrio();
+
+  guest.close();
+  await host.state((m) => m.game?.seats.some((s) => !s.connected));
+  host.send({ type: 'endRun' });
+  await third.state((m) => m.game?.endVotes.length === 1);
+
+  const back = await Client.open();
+  back.send({ type: 'join', code, name: 'Sam', playerId: guestId });
+  const together = await third.state((m) => m.game?.seats.every((s) => s.connected));
+  assert.deepEqual(together.game.endVotes, [], 'nothing is left hanging over a run that recovered');
+  assert.equal(together.game.phase, 'playing');
+
+  host.close();
+  guest.close();
+  third.close();
+  back.close();
+});
+
+test('an end-run vote is refused while everyone is here', async () => {
+  const { host, guest } = await startedRoom();
+  await bothReady(host, guest);
+
+  host.send({ type: 'endRun' });
+  assert.match((await host.next((m) => m.type === 'error')).message, /Everyone is here/);
+
+  host.close();
+  guest.close();
 });
 
 test('an untimed run carries no clock', async () => {
