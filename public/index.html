@@ -38,6 +38,15 @@
 
 <div id="toast" class="toast" role="alert" aria-live="assertive" hidden></div>
 
+<!--
+  The way out of a game. It rides above every gate rather than sitting in the
+  HUD, because a gate covers the HUD — and a gate is exactly where a player
+  ends up stuck waiting on somebody who is never coming back.
+-->
+<button id="btn-exit" class="icon-btn exit-btn" title="Leave room" aria-label="Leave room" hidden>
+  <svg class="i" aria-hidden="true"><use href="#i-x" /></svg>
+</button>
+
 <!-- ── Home ─────────────────────────────────────────────── -->
 <section id="screen-home" class="screen">
   <div class="home">
@@ -204,6 +213,16 @@
       <li>Lives at zero ends the run. Clear the final level and you have beaten The Mind.</li>
     </ul>
     <button id="btn-rules-close" class="btn btn-ghost">Got it</button>
+  </div>
+</div>
+
+<!-- ── Leaving ──────────────────────────────────────────── -->
+<div id="overlay-leave" class="overlay overlay-lift" role="dialog" aria-labelledby="leave-title" hidden>
+  <div class="overlay-card">
+    <h2 id="leave-title" class="overlay-title">Leave the room?</h2>
+    <p id="leave-body" class="hint"></p>
+    <button id="btn-leave-confirm" class="btn btn-primary">Leave room</button>
+    <button id="btn-leave-cancel" class="link-btn">Stay</button>
   </div>
 </div>
 

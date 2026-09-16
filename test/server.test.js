@@ -524,6 +524,81 @@ async function bothReady(host, guest) {
   return host.state((m) => m.game?.phase === 'playing');
 }
 
+test('leaving the lobby frees the seat and hands the room on', async () => {
+  const host = await Client.open();
+  const guest = await Client.open();
+  host.send({ type: 'create', name: 'Richard' });
+  const { code } = await host.next((m) => m.type === 'joined');
+  guest.send({ type: 'join', code, name: 'Sam' });
+  await guest.next((m) => m.type === 'joined');
+  await guest.state((m) => m.lobby.length === 2);
+
+  host.send({ type: 'leave' });
+  const alone = await guest.state((m) => m.lobby.length === 1);
+  assert.deepEqual(alone.lobby.map((p) => p.name), ['Sam']);
+  assert.equal(alone.you.isHost, true, 'the room goes with the seat');
+
+  host.close();
+  guest.close();
+});
+
+test('a player stuck behind a gate can walk out, and the run ends with them', async () => {
+  const { host, guest, started, code, guestId } = await startedRoom();
+  assert.equal(started.game.phase, 'ready', 'the level has not begun, so no card can be played');
+  host.send({ type: 'ready' });
+  await guest.state((m) => m.game?.ready.length === 1);
+
+  // The other phone never taps ready, and a dropped connection would only hold
+  // the seat open. Saying so is the way out.
+  host.drain();
+  guest.send({ type: 'leave' });
+  assert.match((await host.next((m) => m.type === 'notice')).message, /Sam left the room/);
+
+  const lobby = await host.state((m) => m.game === null);
+  assert.deepEqual(lobby.lobby.map((p) => p.name), ['Richard'], 'the seat goes with them');
+
+  // The seat really is gone: their old id cannot walk back into it.
+  const back = await Client.open();
+  back.send({ type: 'join', code, name: 'Sam', playerId: guestId });
+  await back.next((m) => m.type === 'joined');
+  const rejoined = await back.state((m) => m.lobby.length === 2);
+  assert.notEqual(rejoined.you.id, guestId, 'a fresh seat, not the one they walked out of');
+  assert.equal(rejoined.game, null);
+
+  host.close();
+  guest.close();
+  back.close();
+});
+
+test('leaving a finished run frees the seat without pulling the others off it', async () => {
+  const { host, guest } = await startedRoom({ timed: true }, FAST_URL);
+  await bothReady(host, guest);
+  await host.state((m) => m.game?.phase === 'lost');
+  await guest.state((m) => m.game?.phase === 'lost');
+
+  host.drain();
+  guest.send({ type: 'leave' });
+  const still = await host.state((m) => m.lobby.length === 1);
+  assert.equal(still.game.phase, 'lost', 'the result is the table’s to sit with');
+
+  // And nobody is waiting on them: whoever is left is the whole table.
+  host.send({ type: 'backToLobby' });
+  const lobby = await host.state((m) => m.game === null);
+  assert.deepEqual(lobby.lobby.map((p) => p.name), ['Richard']);
+
+  host.close();
+  guest.close();
+});
+
+test('leaving a room you were never in is harmless', async () => {
+  const c = await Client.open();
+  c.send({ type: 'leave' });
+  c.send({ type: 'ping' });
+  await c.next((m) => m.type === 'pong');
+  assert.deepEqual(c.queue, [], 'no error came back ahead of the pong');
+  c.close();
+});
+
 test('an untimed run carries no clock', async () => {
   const { host, guest } = await startedRoom();
   host.send({ type: 'ready' });
@@ -680,6 +755,13 @@ test('the app shell is served over http', async () => {
   assert.equal(res.status, 200);
   const body = await res.text();
   assert.match(body, /<title>The Mind<\/title>/);
+
+  // The way out of a game cannot live inside the game screen's own markup:
+  // every gate overlay covers it there, and a gate is where players get stuck.
+  assert.ok(
+    body.includes('id="btn-exit"') && body.indexOf('id="btn-exit"') < body.indexOf('id="screen-game"'),
+    'the exit button ships outside the game screen',
+  );
 
   const css = await fetch(`http://127.0.0.1:${PORT}/styles.css`);
   assert.equal(css.headers.get('content-type'), 'text/css; charset=utf-8');

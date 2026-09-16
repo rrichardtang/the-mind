@@ -102,6 +102,12 @@
       goHome(msg.message || 'The host removed you from the room.');
       return;
     }
+    // Something the room needs said that no state can carry — a run ended by
+    // somebody walking out, say.
+    if (msg.type === 'notice') {
+      toast(msg.message);
+      return;
+    }
     if (msg.type === 'error') {
       setEntering(false);
       toast(msg.message);
@@ -119,8 +125,24 @@
   /* ── Screens & toast ────────────────────────────────── */
 
   const screens = { home: $('screen-home'), lobby: $('screen-lobby'), game: $('screen-game') };
+  let screenName = 'home';
   function show(name) {
+    // A screen change means the room moved on under you — whatever the leave
+    // sheet was asking about is no longer the question.
+    if (name !== screenName) closeLeave();
+    screenName = name;
     for (const [k, node] of Object.entries(screens)) node.hidden = k !== name;
+    syncExit();
+  }
+
+  /**
+   * The exit button is the game screen's only way out, since every gate covers
+   * the HUD. It stays off any screen with its own Leave control, and off any
+   * sheet where a ✕ in the corner would read as that sheet's close button.
+   */
+  function syncExit() {
+    $('btn-exit').hidden =
+      screenName !== 'game' || !$('overlay-rules').hidden || !$('overlay-leave').hidden;
   }
 
   let toastTimer;
@@ -157,8 +179,31 @@
     if (on) enteringTimer = setTimeout(() => setEntering(false), 8000);
   }
 
+  /**
+   * Leaving is the one thing here with no undo — mid-run it ends the run for
+   * everybody — so it is always asked first, in the words that apply.
+   */
+  function askToLeave() {
+    const g = state?.game;
+    const midRun = g && g.phase !== 'won' && g.phase !== 'lost';
+    $('leave-body').textContent = midRun
+      ? 'Nobody else can play your hand, so the run ends here for everyone and the room drops back to the lobby.'
+      : 'Your seat is freed and you go back to the start. The others carry on without you.';
+    $('overlay-leave').hidden = false;
+    syncExit();
+  }
+
+  function closeLeave() {
+    $('overlay-leave').hidden = true;
+    syncExit();
+  }
+
   /** Drop the room we were in and go back to the start, optionally saying why. */
   function goHome(message) {
+    closeLeave();
+    // Say so on the way out: a socket that merely closes reads as a phone that
+    // dropped, and mid-game that holds the seat open instead of freeing it.
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'leave' }));
     store.del('code');
     store.del('playerId');
     intent = null;
@@ -706,12 +751,16 @@
   $('btn-ready').addEventListener('click', () => send({ type: 'ready' }));
   $('btn-star').addEventListener('click', () => send({ type: 'star' }));
 
-  $('btn-leave-lobby').addEventListener('click', () => goHome());
+  $('btn-leave-lobby').addEventListener('click', askToLeave);
+  $('btn-exit').addEventListener('click', askToLeave);
+  $('btn-leave-cancel').addEventListener('click', closeLeave);
+  $('btn-leave-confirm').addEventListener('click', () => goHome());
 
   const rules = $('overlay-rules');
-  $('btn-rules-home').addEventListener('click', () => { rules.hidden = false; });
-  $('btn-rules-game').addEventListener('click', () => { rules.hidden = false; });
-  $('btn-rules-close').addEventListener('click', () => { rules.hidden = true; });
+  const openRules = () => { rules.hidden = false; syncExit(); };
+  $('btn-rules-home').addEventListener('click', openRules);
+  $('btn-rules-game').addEventListener('click', openRules);
+  $('btn-rules-close').addEventListener('click', () => { rules.hidden = true; syncExit(); });
 
   // A room code in the URL (?room=ABCD) lets you share a join link.
   const fromUrl = new URLSearchParams(location.search).get('room');

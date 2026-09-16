@@ -97,15 +97,22 @@ different clock for real games.
 
 ## Notes
 
-- **Dropped connection.** Your seat and hand are held open; reopening the page rejoins the same
-  room automatically. Mid-game a disconnected player keeps their seat, so the game can carry on
-  when someone's phone locks. On a timed run the clock pauses while they are away — their cards
-  are unplayable by anyone else, so the level would otherwise be unwinnable — and resumes with
-  the time it had once everyone is back. It pauses behind a mistake for the same reason: nobody
-  can play while the callout is up. No gate ever waits on a player who is gone.
+- **Leaving.** The way out is one tap from anywhere: **Leave room** in the lobby, and the ✕ in
+  the corner of the game — which rides above the ready and mistake gates, so waiting on somebody
+  who is never coming back can't trap you there. Both ask first. Mid-run your seat goes for good
+  and the run ends for the table, because nobody else can play your hand; the room drops back to
+  the lobby and can start again. A run that is already over is only ever yours to leave.
+- **Dropped connection.** A connection that drops is not the same as walking out. Your seat and
+  hand are held open; reopening the page rejoins the same room automatically. Mid-game a
+  disconnected player keeps their seat, so the game can carry on when someone's phone locks. On
+  a timed run the clock pauses while they are away — their cards are unplayable by anyone else,
+  so the level would otherwise be unwinnable — and resumes with the time it had once everyone is
+  back. It pauses behind a mistake for the same reason: nobody can play while the callout is up.
+  No gate ever waits on a player who is gone.
 - **Removing a player.** In the lobby the host gets a ✕ beside everyone else; tapping it sends
   that player back to the home screen and frees the seat. It only works before the game starts —
-  once hands are dealt, everyone in the run is needed to finish the level.
+  once hands are dealt, everyone in the run is needed to finish the level, so the only way out of
+  one is a player leaving of their own accord.
 - **Rooms** are in-memory and disappear when the server restarts, plus 6 hours after the last
   player leaves. Nothing is persisted, and there are no accounts.
 - **Add to Home Screen** on iOS or Android for a full-screen, app-like game.
