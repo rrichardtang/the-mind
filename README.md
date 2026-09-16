@@ -53,13 +53,19 @@ Level N deals every player N cards from a 1–100 deck. Together you have to pla
 one pile in **ascending order — without communicating**. No talking, no gestures, no counting.
 
 - Play a card while someone still holds a lower one and you **lose a life**; every lower card is
-  discarded face up.
+  discarded face up. Play then stops dead: the player who jumped and the player who was sitting on
+  the lowest card each get a full-screen callout naming the two cards, and neither the pile nor the
+  clock moves until both have tapped through it. Everyone else watches, and is told who it is
+  waiting on.
 - A **shuriken ✦** takes unanimous agreement. Everyone then discards their lowest card face up.
 - Clearing certain levels earns a bonus life or shuriken.
 - **Timed levels** are optional — the host ticks the box in the lobby before starting. Each level
   then gives you 20 seconds per card dealt (`20 × players × level`), and letting the clock reach
   zero ends the whole run, not just a life. The clock stops while anyone is disconnected.
 - Lives hit zero and the run ends. Clear the last level and you've beaten The Mind.
+- A lost run stays on screen. Nobody is sent back to the lobby when somebody else has had enough:
+  each player taps **Back to the lobby** in their own time, and the room drops back once the last
+  one has. Players who have left are not waited on.
 
 Your hand is always sorted ascending. Your **lowest card fills most of the screen** — tap it to
 play it, and it flies up into the pile as the next card rises to take its place. The strip along
@@ -95,7 +101,8 @@ different clock for real games.
   room automatically. Mid-game a disconnected player keeps their seat, so the game can carry on
   when someone's phone locks. On a timed run the clock pauses while they are away — their cards
   are unplayable by anyone else, so the level would otherwise be unwinnable — and resumes with
-  the time it had once everyone is back.
+  the time it had once everyone is back. It pauses behind a mistake for the same reason: nobody
+  can play while the callout is up. No gate ever waits on a player who is gone.
 - **Removing a player.** In the lobby the host gets a ✕ beside everyone else; tapping it sends
   that player back to the home screen and frees the seat. It only works before the game starts —
   once hands are dealt, everyone in the run is needed to finish the level.

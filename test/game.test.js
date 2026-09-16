@@ -5,6 +5,9 @@ import {
   setReady,
   playCard,
   toggleStarVote,
+  acknowledgeMistake,
+  dismissRun,
+  settleGates,
   nextLevel,
   checkTimeout,
   setClockPaused,
@@ -22,6 +25,12 @@ function staged(hands, ids = IDS) {
   ids.forEach((id) => setReady(g, id, ids));
   g.hands = structuredClone(hands);
   return g;
+}
+
+/** Everyone owns the mistake on the table, which is what lets play go on. */
+function ownUp(g, ids = IDS) {
+  ids.forEach((id) => acknowledgeMistake(g, id));
+  settleGates(g, ids);
 }
 
 test('level counts follow player count', () => {
@@ -88,32 +97,144 @@ test('playing too high costs exactly one life and burns every lower card', () =>
   assert.deepEqual(g.pile.map((p) => p.card), [50]);
 });
 
-test('running out of lives ends the run', () => {
+test('running out of lives ends the run, once the mistake is owned', () => {
   const g = staged({ a: [90], b: [1], c: [2] });
   g.lives = 1;
   playCard(g, 'a', 90, nameOf);
-  assert.equal(g.lives, 0);
+  assert.equal(g.lives, 0, 'the life goes straight away');
+  assert.equal(g.phase, 'mistake', 'but the run is not over until they have seen why');
+  ownUp(g);
   assert.equal(g.phase, 'lost');
+  assert.equal(g.lostTo, 'lives');
 });
 
 test('a mistake that empties every hand still ends the level', () => {
   const g = staged({ a: [50], b: [10], c: [30] });
   playCard(g, 'a', 50, nameOf);
   assert.equal(g.lives, 2);
+  assert.equal(g.phase, 'mistake');
+  ownUp(g);
   assert.equal(g.phase, 'levelCleared');
 });
 
-test('a mistake logs the culprit, victims, and a message from each pool', () => {
+test('a mistake logs the culprit and every player it burned a card from', () => {
   const g = staged({ a: [50], b: [10, 20], c: [30] });
   playCard(g, 'a', 50, nameOf);
   const entry = g.log.find((e) => e.kind === 'mistake');
   assert.ok(entry);
   assert.equal(entry.culprit, 'a');
   assert.deepEqual([...entry.victims].sort(), ['b', 'c']);
-  assert.equal(typeof entry.culpritMessage, 'string');
-  assert.ok(entry.culpritMessage.length > 0);
-  assert.equal(typeof entry.victimMessage, 'string');
-  assert.ok(entry.victimMessage.length > 0);
+  assert.deepEqual(entry.burned, [10, 20, 30]);
+});
+
+/* ── The mistake gate ───────────────────────────────────── */
+
+test('a mistake names the player who jumped and the one sitting on the lowest card', () => {
+  const g = staged({ a: [50], b: [30], c: [10, 20] });
+  playCard(g, 'a', 50, nameOf);
+  assert.equal(g.phase, 'mistake');
+  assert.equal(g.mistake.culprit, 'a');
+  assert.equal(g.mistake.victim, 'c', 'the lowest card was C\u2019s, not every burned player');
+  assert.equal(g.mistake.card, 50);
+  assert.equal(g.mistake.lowest, 10);
+  assert.equal(typeof g.mistake.culpritMessage, 'string');
+  assert.ok(g.mistake.culpritMessage.length > 0);
+  assert.equal(typeof g.mistake.victimMessage, 'string');
+  assert.ok(g.mistake.victimMessage.length > 0);
+});
+
+test('nothing can be played or thrown until the mistake is owned', () => {
+  const g = staged({ a: [50, 60], b: [10], c: [70] });
+  playCard(g, 'a', 50, nameOf);
+
+  const blocked = playCard(g, 'c', 70, nameOf);
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.error, /mistake/i);
+  assert.equal(toggleStarVote(g, 'c', IDS, nameOf).ok, false);
+  assert.deepEqual(g.hands.c, [70], 'the card stays in their hand');
+
+  ownUp(g);
+  assert.equal(g.phase, 'playing');
+  assert.equal(playCard(g, 'a', 60, nameOf).ok, true);
+});
+
+test('only the two players it was between can own a mistake, and both must', () => {
+  const g = staged({ a: [50, 60], b: [10], c: [70] });
+  playCard(g, 'a', 50, nameOf);
+
+  acknowledgeMistake(g, 'c'); // a bystander cannot wave it through
+  settleGates(g, IDS);
+  assert.equal(g.phase, 'mistake');
+  assert.deepEqual(g.mistake.acks, []);
+
+  acknowledgeMistake(g, 'a');
+  acknowledgeMistake(g, 'a'); // twice is once
+  settleGates(g, IDS);
+  assert.deepEqual(g.mistake.acks, ['a']);
+  assert.equal(g.phase, 'mistake', 'one of the two is not enough');
+
+  acknowledgeMistake(g, 'b');
+  settleGates(g, IDS);
+  assert.equal(g.phase, 'playing');
+  assert.equal(g.mistake, null);
+});
+
+test('a player who is gone is not waited on', () => {
+  const g = staged({ a: [50, 60], b: [10], c: [70] });
+  playCard(g, 'a', 50, nameOf);
+  acknowledgeMistake(g, 'a');
+  // B's phone died holding the card that should have gone first.
+  settleGates(g, ['a', 'c']);
+  assert.equal(g.phase, 'playing', 'the table is not frozen behind an empty seat');
+});
+
+test('the next level is dealt without a mistake hanging over it', () => {
+  const g = staged({ a: [50], b: [10], c: [30] });
+  playCard(g, 'a', 50, nameOf);
+  ownUp(g);
+  nextLevel(g);
+  assert.equal(g.phase, 'ready');
+  assert.equal(g.mistake, null);
+});
+
+/* ── Stepping away from a lost run ──────────────────────── */
+
+test('a lost run waits for every player before the room moves on', () => {
+  const g = staged({ a: [90], b: [1], c: [2] });
+  g.lives = 1;
+  playCard(g, 'a', 90, nameOf);
+  ownUp(g);
+  assert.equal(g.phase, 'lost');
+
+  assert.equal(settleGates(g, IDS), false, 'nobody has said they are done');
+  dismissRun(g, 'a');
+  dismissRun(g, 'a');
+  assert.deepEqual(g.done, ['a']);
+  assert.equal(settleGates(g, IDS), false);
+
+  dismissRun(g, 'b');
+  assert.equal(settleGates(g, IDS), false, 'C is still looking at it');
+  dismissRun(g, 'c');
+  assert.equal(settleGates(g, IDS), true);
+});
+
+test('a lost run is only ever dismissed by players who are still here', () => {
+  const g = staged({ a: [90], b: [1], c: [2] });
+  g.lives = 1;
+  playCard(g, 'a', 90, nameOf);
+  ownUp(g);
+
+  dismissRun(g, 'a');
+  assert.equal(settleGates(g, ['a', 'b']), false);
+  assert.equal(settleGates(g, ['a']), true, 'the others walked off; A is the whole table');
+  assert.equal(settleGates(g, []), false, 'an empty room ends nothing on its own');
+});
+
+test('a run still being played is never dismissed', () => {
+  const g = staged({ a: [5], b: [20], c: [70] });
+  dismissRun(g, 'a');
+  assert.deepEqual(g.done, []);
+  assert.equal(settleGates(g, IDS), false);
 });
 
 test('a shuriken needs unanimous votes and discards each lowest card', () => {
@@ -224,6 +345,26 @@ test('a player view hides other hands but reveals their sizes', () => {
   assert.equal(view.cardsRemaining, 4);
 });
 
+test('the mistake reaches each player in their own words, and hides nobody', () => {
+  const g = staged({ a: [50], b: [30], c: [10, 20] });
+  playCard(g, 'a', 50, nameOf);
+  const players = new Map(IDS.map((id) => [id, { id, name: nameOf(id), connected: true }]));
+
+  const culprit = viewFor(g, 'a', players).mistake;
+  assert.equal(culprit.message, g.mistake.culpritMessage);
+  assert.deepEqual(culprit.waitingOn, ['a', 'c']);
+  assert.equal(culprit.lowest, 10);
+  assert.equal(culprit.victim, 'c');
+
+  assert.equal(viewFor(g, 'c', players).mistake.message, g.mistake.victimMessage);
+  assert.equal(viewFor(g, 'b', players).mistake.message, null, 'a bystander gets no line of their own');
+
+  // Nobody waits on a player who is no longer there.
+  acknowledgeMistake(g, 'a');
+  players.set('c', { id: 'c', name: 'C', connected: false });
+  assert.deepEqual(viewFor(g, 'b', players).mistake.waitingOn, []);
+});
+
 test('a two player game runs 12 levels with 2 lives', () => {
   const g = createGame(['a', 'b']);
   assert.equal(g.maxLevel, 12);
@@ -235,6 +376,7 @@ test('lives lost are tracked per level and reset on the next deal', () => {
   assert.equal(g.livesLostThisLevel, 0);
   playCard(g, 'a', 50, nameOf);
   assert.equal(g.livesLostThisLevel, 1, 'a botched level is distinguishable from a clean one');
+  ownUp(g);
   nextLevel(g);
   assert.equal(g.livesLostThisLevel, 0);
 });
@@ -311,6 +453,7 @@ test('running out of lives is distinguishable from running out of time', () => {
   g.hands = { a: [90], b: [1], c: [2] };
   g.lives = 1;
   playCard(g, 'a', 90, nameOf);
+  ownUp(g);
   assert.equal(g.phase, 'lost');
   assert.equal(g.lostTo, 'lives');
   assert.equal(g.deadlineAt, null);

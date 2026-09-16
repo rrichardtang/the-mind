@@ -37,7 +37,6 @@
 </svg>
 
 <div id="toast" class="toast" role="alert" aria-live="assertive" hidden></div>
-<div id="mistake-popup" class="mistake-popup" role="alert" aria-live="assertive" hidden></div>
 
 <!-- ── Home ─────────────────────────────────────────────── -->
 <section id="screen-home" class="screen">
@@ -148,8 +147,19 @@
     <div class="overlay-card">
       <h2 class="overlay-title">Level <span id="ready-level">1</span></h2>
       <p class="hint">Everyone taps ready, then play in ascending order without saying a word.</p>
-      <div id="ready-list" class="ready-list"></div>
+      <div id="ready-list" class="chip-row"></div>
       <button id="btn-ready" class="btn btn-primary">I'm ready</button>
+    </div>
+  </div>
+
+  <!-- Out of turn: play stops here until both players own it -->
+  <div id="overlay-mistake" class="overlay" role="alertdialog" aria-labelledby="mistake-title" hidden>
+    <div class="overlay-card">
+      <div id="mistake-icon" class="result-icon"></div>
+      <h2 id="mistake-title" class="overlay-title">Out of order</h2>
+      <div id="mistake-cards" class="mistake-cards"></div>
+      <p id="mistake-body" class="hint"></p>
+      <button id="btn-mistake" class="btn btn-primary">My bad</button>
     </div>
   </div>
 
@@ -159,6 +169,8 @@
       <div id="result-icon" class="result-icon"></div>
       <h2 id="result-title" class="overlay-title">Level cleared</h2>
       <p id="result-body" class="hint"></p>
+      <!-- A lost run waits for everyone: these are the players still with it. -->
+      <div id="result-list" class="chip-row" hidden></div>
       <button id="btn-result" class="btn btn-primary">Next level</button>
     </div>
   </div>
@@ -184,7 +196,8 @@
       <li>The deck is <b>1 to 100</b>. On level N everyone is dealt N cards.</li>
       <li>Together you must play every card into one pile in <b>ascending order</b>.</li>
       <li><b>No talking</b>, no hinting, no counting out loud. Just feel the timing.</li>
-      <li>Play a card while someone still holds a lower one and you <b>lose a life</b>. Every lower card is discarded, and everyone involved gets called out.</li>
+      <li>Play a card while someone still holds a lower one and you <b>lose a life</b>. Every lower card is discarded.</li>
+      <li>Play stops dead after a mistake: the player who jumped and the player sitting on the <b>lowest card</b> both have to own it before the level carries on.</li>
       <li>A <b>shuriken</b> needs everyone to agree. Each player then discards their lowest card face up.</li>
       <li>Clearing certain levels earns a bonus life or shuriken.</li>
       <li>On a <b>timed</b> run each level gives you a set number of seconds per card dealt. Let the clock reach zero and the whole run is over. The clock pauses while anyone is offline.</li>

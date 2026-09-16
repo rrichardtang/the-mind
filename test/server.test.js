@@ -72,6 +72,8 @@ class Client {
     return c;
   }
   send(msg) { this.ws.send(JSON.stringify(msg)); }
+  /** Forget what is already queued, so the next match can only be new. */
+  drain() { this.queue.length = 0; }
   next(match) {
     const i = this.queue.findIndex(match);
     if (i >= 0) return Promise.resolve(this.queue.splice(i, 1)[0]);
@@ -195,9 +197,51 @@ test('a mistake costs a life on every client', async () => {
   const wrongCard = hostHigh ? hs.game.hand[0] : gs.game.hand[0];
   wrong.send({ type: 'play', card: wrongCard });
 
-  const after = await guest.state((m) => m.game?.lives === 1);
+  // Play stops on both phones, and each of the two is told in their own words.
+  const hostAfter = await host.state((m) => m.game?.phase === 'mistake');
+  const guestAfter = await guest.state((m) => m.game?.phase === 'mistake');
+  const after = hostHigh ? guestAfter : hostAfter; // the one who was jumped
+  const wrongState = hostHigh ? hostAfter : guestAfter;
   assert.equal(after.game.lives, 1);
+  assert.equal(wrongState.game.lives, 1);
   assert.ok(after.game.log.some((l) => l.kind === 'mistake'));
+
+  assert.equal(wrongState.game.mistake.card, wrongCard);
+  assert.equal(typeof wrongState.game.mistake.message, 'string');
+  assert.notEqual(after.game.mistake.message, wrongState.game.mistake.message);
+  assert.equal(after.game.mistake.waitingOn.length, 2);
+
+  // Nothing can be played behind it.
+  const right = hostHigh ? guest : host;
+  right.send({ type: 'play', card: after.game.hand[0] });
+  assert.match((await right.next((m) => m.type === 'error')).message, /mistake/i);
+
+  host.send({ type: 'ackMistake' });
+  guest.send({ type: 'ackMistake' });
+  const resumed = await guest.state((m) => m.game && m.game.phase !== 'mistake');
+  assert.equal(resumed.game.mistake, null);
+
+  host.close();
+  guest.close();
+});
+
+test('a mistake holds the clock until the table owns it', async () => {
+  const { host, guest, started, guestStarted } = await startedRoom({ timed: true }, FAST_URL);
+  await bothReady(host, guest);
+
+  // Play the higher card first, then sit on the callout for longer than the
+  // level was ever worth: the clock has to wait, or the run is lost to it.
+  const hostHigh = started.game.hand[0] > guestStarted.game.hand[0];
+  const wrongCard = hostHigh ? started.game.hand[0] : guestStarted.game.hand[0];
+  (hostHigh ? host : guest).send({ type: 'play', card: wrongCard });
+  const held = await host.state((m) => m.game?.phase === 'mistake');
+  assert.equal(held.game.clockPaused, true);
+  await new Promise((r) => setTimeout(r, FAST_BUDGET_MS * 2));
+
+  host.send({ type: 'ackMistake' });
+  guest.send({ type: 'ackMistake' });
+  const resumed = await host.state((m) => m.game && m.game.phase !== 'mistake');
+  assert.notEqual(resumed.game.phase, 'lost', 'the outage of attention never counted against the clock');
 
   host.close();
   guest.close();
@@ -318,6 +362,13 @@ test('rejoining after a finished run starts from a clean lobby', async () => {
 
     const hostHigh = hs.game.hand[0] > gs.game.hand[0];
     (hostHigh ? host : guest).send({ type: 'play', card: hostHigh ? hs.game.hand[0] : gs.game.hand[0] });
+
+    // With two players the mistake is between both of them, so both own it.
+    await host.state((m) => m.game?.phase === 'mistake');
+    await guest.state((m) => m.game?.phase === 'mistake');
+    host.send({ type: 'ackMistake' });
+    guest.send({ type: 'ackMistake' });
+
     if (level === 1) {
       await host.state((m) => m.game?.phase === 'levelCleared');
       host.send({ type: 'nextLevel' });
@@ -461,8 +512,8 @@ async function startedRoom(options = {}, url) {
   await host.state((m) => m.lobby.length === 2);
   host.send({ type: 'start', ...options });
   const started = await host.state((m) => m.game);
-  await guest.state((m) => m.game);
-  return { host, guest, started, code, guestId: guestJoin.playerId };
+  const guestStarted = await guest.state((m) => m.game);
+  return { host, guest, started, guestStarted, code, guestId: guestJoin.playerId };
 }
 
 /** Both players say ready, and the level is under way on both clients. */
@@ -532,6 +583,68 @@ test('the clock runs out with nobody touching anything, twice in a row', async (
 
   host.close();
   guest.close();
+});
+
+test('a mistake is not left hanging by a phone that dies behind it', async () => {
+  const { host, guest, started, guestStarted } = await startedRoom();
+  await bothReady(host, guest);
+
+  const hostHigh = started.game.hand[0] > guestStarted.game.hand[0];
+  const wrong = hostHigh ? host : guest;
+  const jumped = hostHigh ? guest : host; // was sitting on the lowest card
+  wrong.send({ type: 'play', card: hostHigh ? started.game.hand[0] : guestStarted.game.hand[0] });
+  await wrong.state((m) => m.game?.phase === 'mistake');
+
+  // They walk off mid-callout, so theirs is an acknowledgement nobody can give.
+  jumped.close();
+  await wrong.state((m) => m.game?.seats.some((s) => !s.connected));
+  wrong.send({ type: 'ackMistake' });
+
+  const resumed = await wrong.state((m) => m.game && m.game.phase !== 'mistake');
+  assert.equal(resumed.game.mistake, null);
+
+  wrong.close();
+});
+
+test('a lost run stays up until every player steps away from it', async () => {
+  const { host, guest, started } = await startedRoom({ timed: true }, FAST_URL);
+  await bothReady(host, guest);
+  await host.state((m) => m.game?.phase === 'lost');
+  await guest.state((m) => m.game?.phase === 'lost');
+
+  // One player is done looking. That is not the table's decision to make.
+  host.send({ type: 'backToLobby' });
+  const waiting = await guest.state((m) => m.game?.done.length === 1);
+  assert.equal(waiting.game.phase, 'lost', "nobody is sent back on somebody else’s say-so");
+  assert.deepEqual(waiting.game.done, [started.you.id]);
+
+  host.drain();
+  guest.drain();
+  guest.send({ type: 'backToLobby' });
+  const lobby = await guest.state((m) => m.game === null);
+  assert.equal(lobby.lobby.length, 2, 'both seats carry into the lobby');
+  await host.state((m) => m.game === null);
+
+  host.close();
+  guest.close();
+});
+
+test('a lost run is not held open by a player who has left', async () => {
+  const { host, guest } = await startedRoom({ timed: true }, FAST_URL);
+  await bothReady(host, guest);
+  await host.state((m) => m.game?.phase === 'lost');
+  await guest.state((m) => m.game?.phase === 'lost');
+
+  host.send({ type: 'backToLobby' });
+  await host.state((m) => m.game?.done.length === 1);
+
+  // The other phone is gone for good: the one player still here is the table.
+  host.drain();
+  guest.close();
+  const lobby = await host.state((m) => m.game === null);
+  assert.deepEqual(lobby.lobby.map((p) => p.name), ['Richard']);
+
+  host.close();
 });
 
 test('the clock waits for a dropped player and resumes when they come back', async () => {
