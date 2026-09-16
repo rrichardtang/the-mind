@@ -10,6 +10,7 @@ import {
   setReady,
   playCard,
   toggleStarVote,
+  toggleEndVote,
   acknowledgeMistake,
   dismissRun,
   settleGates,
@@ -133,7 +134,7 @@ function syncTimer(room, now) {
  */
 function settleRoom(room, now) {
   if (!room.game) return;
-  if (settleGates(room.game, activeIds(room))) return endGame(room);
+  if (settleGates(room.game, activeIds(room), now)) return endGame(room);
   // A disconnected player's cards cannot be played by anyone, and an
   // unacknowledged mistake stops play outright: either way a timed level would
   // run down through no fault of the table, so the clock waits too.
@@ -243,7 +244,8 @@ function joinRoom(ws, ctx, room, name, playerId) {
 
 /**
  * Give up a seat. Before the game starts the seat is freed outright; mid-game it
- * is held open so a dropped phone can come back to the same hand.
+ * is held open so a dropped phone — or a player who stepped away on purpose —
+ * can come back to the same hand.
  */
 function dropSeat(room, playerId) {
   const player = room.players.get(playerId);
@@ -345,6 +347,14 @@ function handleMessage(ws, ctx, msg) {
       if (!room) return;
       dismissRun(room.game, ctx.playerId);
       return broadcast(room); // the last one out ends the run, from settleRoom
+    }
+
+    case 'endRun': {
+      const room = requireGame(ws, ctx);
+      if (!room) return;
+      const result = toggleEndVote(room.game, ctx.playerId, activeIds(room));
+      if (!result.ok) return fail(ws, result.error);
+      return broadcast(room); // unanimity is settled in broadcast, like the other gates
     }
 
     case 'star': {

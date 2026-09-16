@@ -38,6 +38,15 @@
 
 <div id="toast" class="toast" role="alert" aria-live="assertive" hidden></div>
 
+<!--
+  The way out of a game. It rides above every gate rather than sitting in the
+  HUD, because a gate covers the HUD — and a gate is exactly where a player
+  ends up stuck waiting on somebody else.
+-->
+<button id="btn-exit" class="icon-btn exit-btn" title="Step away" aria-label="Step away" hidden>
+  <svg class="i" aria-hidden="true"><use href="#i-x" /></svg>
+</button>
+
 <!-- ── Home ─────────────────────────────────────────────── -->
 <section id="screen-home" class="screen">
   <div class="home">
@@ -46,6 +55,15 @@
       <h1>The Mind</h1>
       <p class="lede">One deck. No talking. Play in order.</p>
     </header>
+
+    <!-- A held seat, waiting to be picked back up. -->
+    <div id="rejoin" class="rejoin" hidden>
+      <button id="btn-rejoin" class="btn btn-primary">
+        Rejoin <b id="rejoin-code" class="num">----</b>
+      </button>
+      <p class="hint">Your seat and your cards are still being held.</p>
+      <div class="divider"><span>or start again</span></div>
+    </div>
 
     <div class="stack">
       <label class="field">
@@ -124,6 +142,16 @@
 
   <ul id="seats" class="seats"></ul>
 
+  <!-- Somebody is away, so their cards cannot be played and the level cannot be
+       finished. Ending the run early takes everyone who is still here. -->
+  <div id="away-bar" class="away-bar" hidden>
+    <p id="away-text" class="away-text"></p>
+    <button id="btn-end-run" class="btn btn-vote">
+      <span id="end-run-label">End the run</span>
+      <span class="vote-fill" aria-hidden="true"></span>
+    </button>
+  </div>
+
   <main class="table">
     <!-- Everything already resolved this level, ascending: played, and burned struck through. -->
     <div class="strip">
@@ -178,10 +206,10 @@
   <footer class="hand-area">
     <div class="hand-bar">
       <span id="hand-label" class="label">Your hand</span>
-      <button id="btn-star" class="btn btn-star">
+      <button id="btn-star" class="btn btn-vote btn-star">
         <svg class="i star-glyph" aria-hidden="true"><use href="#i-star" /></svg>
         <span id="star-label">Throw shuriken</span>
-        <span class="star-fill" aria-hidden="true"></span>
+        <span class="vote-fill" aria-hidden="true"></span>
       </button>
     </div>
     <div id="hand" class="hand"></div>
@@ -200,10 +228,21 @@
       <li>Play stops dead after a mistake: the player who jumped and the player sitting on the <b>lowest card</b> both have to own it before the level carries on.</li>
       <li>A <b>shuriken</b> needs everyone to agree. Each player then discards their lowest card face up.</li>
       <li>Clearing certain levels earns a bonus life or shuriken.</li>
-      <li>On a <b>timed</b> run each level gives you a set number of seconds per card dealt. Let the clock reach zero and the whole run is over. The clock pauses while anyone is offline.</li>
+      <li>On a <b>timed</b> run each level gives you a set number of seconds per card dealt. Let the clock reach zero and the whole run is over. The clock pauses while anyone is away.</li>
+      <li>Step away whenever you need to: your seat and your cards are held and the run waits. While anyone is away, everyone still at the table can agree to <b>end the run</b> — nobody else can play the missing cards.</li>
       <li>Lives at zero ends the run. Clear the final level and you have beaten The Mind.</li>
     </ul>
     <button id="btn-rules-close" class="btn btn-ghost">Got it</button>
+  </div>
+</div>
+
+<!-- ── Leaving ──────────────────────────────────────────── -->
+<div id="overlay-leave" class="overlay overlay-lift" role="dialog" aria-labelledby="leave-title" hidden>
+  <div class="overlay-card">
+    <h2 id="leave-title" class="overlay-title">Leave the room?</h2>
+    <p id="leave-body" class="hint"></p>
+    <button id="btn-leave-confirm" class="btn btn-primary">Leave room</button>
+    <button id="btn-leave-cancel" class="link-btn">Stay</button>
   </div>
 </div>
 

@@ -28,6 +28,12 @@
     del(k) { try { localStorage.removeItem(k); } catch { /* private mode */ } },
   };
 
+  /**
+   * The room to quietly reconnect to, if any. A seat stepped away from is never
+   * one: it is held either way, and taking it back is the player's own call.
+   */
+  const autoRejoin = () => (store.get('away') ? null : store.get('code'));
+
   let ws = null;
   let state = null;       // latest server state
   let reconnectAt = 500;  // backoff, ms
@@ -77,9 +83,9 @@
 
     ws.onclose = () => {
       ws = null;
-      // Only auto-rejoin if we were actually in a room.
-      if (!store.get('code')) return;
-      intent = { type: 'join', code: store.get('code'), name: store.get('name'), playerId: store.get('playerId') };
+      const code = autoRejoin();
+      if (!code) return;
+      intent = { type: 'join', code, name: store.get('name'), playerId: store.get('playerId') };
       setTimeout(() => connect(), reconnectAt);
       reconnectAt = Math.min(reconnectAt * 2, 8000);
     };
@@ -96,10 +102,11 @@
       setEntering(false);
       store.set('code', msg.code);
       store.set('playerId', msg.playerId);
+      store.del('away'); // seated again, however we got here
       return;
     }
     if (msg.type === 'removed') {
-      goHome(msg.message || 'The host removed you from the room.');
+      goHome({ message: msg.message || 'The host removed you from the room.' });
       return;
     }
     if (msg.type === 'error') {
@@ -107,7 +114,7 @@
       toast(msg.message);
       // A stale saved room shouldn't trap us on a reconnect loop.
       if (/No room called|already in progress|is full|removed you/i.test(msg.message)) {
-        store.del('code'); store.del('playerId');
+        store.del('code'); store.del('playerId'); store.del('away');
         intent = null;
         show('home');
       }
@@ -119,8 +126,31 @@
   /* ── Screens & toast ────────────────────────────────── */
 
   const screens = { home: $('screen-home'), lobby: $('screen-lobby'), game: $('screen-game') };
+  let screenName = 'home';
   function show(name) {
+    // A screen change means the room moved on under you — whatever the leave
+    // sheet was asking about is no longer the question.
+    if (name !== screenName) closeLeave();
+    screenName = name;
     for (const [k, node] of Object.entries(screens)) node.hidden = k !== name;
+    syncExit();
+    syncRejoin();
+  }
+
+  /**
+   * The exit button is the game screen's only way out, since every gate covers
+   * the HUD. It stays off any screen with its own Leave control, and off any
+   * sheet where a ✕ in the corner would read as that sheet's close button.
+   */
+  function syncExit() {
+    $('btn-exit').hidden =
+      screenName !== 'game' || !$('overlay-rules').hidden || !$('overlay-leave').hidden;
+  }
+
+  /** Open or close a body-level sheet. The exit button always steps aside with it. */
+  function showSheet(node, on) {
+    node.hidden = !on;
+    syncExit();
   }
 
   let toastTimer;
@@ -157,10 +187,48 @@
     if (on) enteringTimer = setTimeout(() => setEntering(false), 8000);
   }
 
-  /** Drop the room we were in and go back to the start, optionally saying why. */
-  function goHome(message) {
-    store.del('code');
-    store.del('playerId');
+  /**
+   * Walking out of a game is a step away, not a resignation: the seat and the
+   * hand are held and the run waits. Walking out of a lobby gives the seat up.
+   * Either is worth asking about first, in the words that apply — and these are
+   * those words, for the three places walking out costs something different.
+   */
+  const LEAVE_COPY = {
+    lobby: 'Your seat is freed and you go back to the start. The others carry on without you.',
+    during:
+      'Your seat and your cards are held, and the run waits for you. Come back from the home ' +
+      'screen whenever you like — though everyone still at the table can agree to end the run ' +
+      'if you are gone a while.',
+    after:
+      'The run is already over, so nobody is left waiting on you. The home screen will offer ' +
+      'the room back whenever you want it.',
+  };
+
+  /** Only a game holds your seat for you; a lobby seat you walk out of is freed. */
+  const walkingOutHolds = () => screenName === 'game';
+
+  function askToLeave() {
+    const hold = walkingOutHolds();
+    const phase = state?.game?.phase;
+    const over = phase === 'won' || phase === 'lost';
+    $('leave-title').textContent = hold ? 'Step away?' : 'Leave the room?';
+    $('btn-leave-confirm').textContent = hold ? 'Step away' : 'Leave room';
+    $('leave-body').textContent = LEAVE_COPY[!hold ? 'lobby' : over ? 'after' : 'during'];
+    showSheet($('overlay-leave'), true);
+  }
+
+  function closeLeave() {
+    showSheet($('overlay-leave'), false);
+  }
+
+  /**
+   * Back to the start. `hold` keeps the room saved, so the seat being held for
+   * you can be taken back; without it the room is forgotten and the seat goes.
+   */
+  function goHome({ hold = false, message } = {}) {
+    closeLeave();
+    if (hold) store.set('away', '1');
+    else { store.del('code'); store.del('playerId'); store.del('away'); }
     intent = null;
     state = null;
     stopTimer();
@@ -172,12 +240,31 @@
     if (message) toast(message);
   }
 
+  /** Offer the held seat back, whenever there is one to take. */
+  function syncRejoin() {
+    const code = store.get('code');
+    const holding = Boolean(code && store.get('playerId') && store.get('away'));
+    $('rejoin').hidden = !holding;
+    if (holding) $('rejoin-code').textContent = code;
+  }
+
   const buzz = (ms) => { try { navigator.vibrate?.(ms); } catch { /* unsupported */ } };
   const initials = (name) => (name || '?').trim().slice(0, 2).toUpperCase();
   const nameIn = (g, id) => g.seats.find((s) => s.id === id)?.name ?? 'Someone';
   /** "Sam", or "Sam and Pat" — whoever a gate is still waiting on. */
   const andList = (names) =>
     names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0] ?? 'the others';
+  /** How many players a unanimous vote has to carry — everyone still at the table. */
+  const votesNeeded = (g) => g.seats.filter((s) => s.connected).length;
+
+  /**
+   * Drive a .btn-vote control: lit once you have voted, and filled by how far
+   * the table has got toward agreeing. The label is each control's own business.
+   */
+  function paintVote(btn, votes, needed) {
+    btn.classList.toggle('voted', votes.includes(state.you.id));
+    btn.style.setProperty('--vote', needed ? votes.length / needed : 0);
+  }
 
   /* ── Render ─────────────────────────────────────────── */
 
@@ -265,6 +352,7 @@
 
     renderTimer(g);
     renderSeats(g);
+    renderAwayBar(g);
     renderPile(g);
     renderHero(g);
     renderFeed(g);
@@ -293,7 +381,7 @@
     // the client never works out what a level is worth.
     urgentBelow = g.msBudget / 4;
 
-    // Someone is offline: their cards are unplayable, so the server holds the
+    // Someone is away: their cards are unplayable, so the server holds the
     // clock. Show it stopped rather than counting down against nobody.
     if (g.clockPaused) { stopTimer(); paintTimer(g.msRemaining, true); return; }
     tickTimer();
@@ -352,7 +440,7 @@
 
       const meta = el('div', 'seat-meta');
       if (!s.connected) {
-        meta.append(el('span', null, 'offline'));
+        meta.append(el('span', null, 'away'));
       } else if (s.votedStar && g.phase === 'playing') {
         meta.append(icon('star'), el('span', null, 'voted'));
       } else {
@@ -367,6 +455,34 @@
       node.append(li);
     }
     prev.seatCards = counts;
+  }
+
+  /**
+   * Somebody is away, so the level cannot be finished: nobody else can play
+   * their cards. The table is told what it is waiting on, and offered a way to
+   * stop waiting that takes everyone still here — so a run is never ended out
+   * from under somebody, and a vote can be taken back the moment they reappear.
+   */
+  function renderAwayBar(g) {
+    const bar = $('away-bar');
+    const away = g.seats.filter((s) => !s.connected);
+    const over = g.phase === 'won' || g.phase === 'lost';
+    bar.hidden = away.length === 0 || over;
+    if (bar.hidden) return;
+
+    // An empty-handed player still stalls the run — the next level deals them
+    // cards again — but only say cards are stuck when some actually are.
+    const names = andList(away.map((s) => (s.id === state.you.id ? 'You' : s.name)));
+    const said = [`${names} ${away.length > 1 ? 'are' : 'is'} away.`];
+    if (away.some((s) => s.cards > 0)) said.push('Nobody else can play those cards.');
+    if (g.clockPaused) said.push('The clock is paused.');
+    $('away-text').textContent = said.join(' ');
+
+    const needed = votesNeeded(g);
+    paintVote($('btn-end-run'), g.endVotes, needed);
+    $('end-run-label').textContent = g.endVotes.length
+      ? `End the run ${g.endVotes.length}/${needed}`
+      : 'End the run';
   }
 
   function renderPile(g) {
@@ -497,15 +613,13 @@
     $('hand-label').textContent = g.hand.length ? `Your hand · ${g.hand.length}` : 'Your hand';
 
     const star = $('btn-star');
-    const votesNeeded = g.seats.filter((s) => s.connected).length;
+    const needed = votesNeeded(g);
     star.disabled = g.phase !== 'playing' || g.shurikens === 0;
-    star.classList.toggle('voted', g.starVotes.includes(state.you.id));
-    // The control fills as votes land, so progress toward unanimity is visible.
-    star.style.setProperty('--vote', votesNeeded ? g.starVotes.length / votesNeeded : 0);
+    paintVote(star, g.starVotes, needed);
     $('star-label').textContent = g.shurikens === 0
       ? 'No shurikens'
       : g.starVotes.length > 0
-        ? `Shuriken ${g.starVotes.length}/${votesNeeded}`
+        ? `Shuriken ${g.starVotes.length}/${needed}`
         : 'Throw shuriken';
   }
 
@@ -706,26 +820,37 @@
   $('btn-ready').addEventListener('click', () => send({ type: 'ready' }));
   $('btn-star').addEventListener('click', () => send({ type: 'star' }));
 
-  $('btn-leave-lobby').addEventListener('click', () => goHome());
+  $('btn-leave-lobby').addEventListener('click', askToLeave);
+  $('btn-exit').addEventListener('click', askToLeave);
+  $('btn-leave-cancel').addEventListener('click', closeLeave);
+  $('btn-leave-confirm').addEventListener('click', () => goHome({ hold: walkingOutHolds() }));
+  $('btn-end-run').addEventListener('click', () => send({ type: 'endRun' }));
+
+  $('btn-rejoin').addEventListener('click', () => {
+    setEntering(true);
+    send({ type: 'join', code: store.get('code'), name: store.get('name'), playerId: store.get('playerId') });
+  });
 
   const rules = $('overlay-rules');
-  $('btn-rules-home').addEventListener('click', () => { rules.hidden = false; });
-  $('btn-rules-game').addEventListener('click', () => { rules.hidden = false; });
-  $('btn-rules-close').addEventListener('click', () => { rules.hidden = true; });
+  $('btn-rules-home').addEventListener('click', () => showSheet(rules, true));
+  $('btn-rules-game').addEventListener('click', () => showSheet(rules, true));
+  $('btn-rules-close').addEventListener('click', () => showSheet(rules, false));
 
   // A room code in the URL (?room=ABCD) lets you share a join link.
   const fromUrl = new URLSearchParams(location.search).get('room');
   if (fromUrl) codeInput.value = fromUrl.toUpperCase().slice(0, 4);
 
   // Rejoin a room we were already in — survives a refresh or a backgrounded tab.
-  const savedCode = store.get('code');
+  // A seat stepped away from is offered instead: coming back is a decision.
+  const savedCode = autoRejoin();
   const savedId = store.get('playerId');
   if (savedCode && savedId) {
     intent = { type: 'join', code: savedCode, name: store.get('name'), playerId: savedId };
     connect();
   }
+  syncRejoin();
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && store.get('code') && !ws) connect();
+    if (document.visibilityState === 'visible' && autoRejoin() && !ws) connect();
   });
 })();
