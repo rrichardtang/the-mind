@@ -46,6 +46,7 @@
     hand: [],
     topCard: null,
     ready: [],
+    done: [],
     lobbyIds: [],
     seatCards: new Map(),
     lives: null,
@@ -132,19 +133,6 @@
     toastTimer = setTimeout(() => { node.hidden = true; }, 3200);
   }
 
-  let mistakePopupTimer;
-  /** Big, per-player callout on a mistake — additive to the dim #feed line. */
-  function showMistakePopup(text, variant) {
-    const node = $('mistake-popup');
-    node.textContent = text;
-    node.className = `mistake-popup ${variant}`;
-    node.hidden = false;
-    void node.offsetWidth; // restart the entrance animation on repeat mistakes
-    node.classList.add('show');
-    clearTimeout(mistakePopupTimer);
-    mistakePopupTimer = setTimeout(() => { node.hidden = true; }, 2200);
-  }
-
   /** A mistake washes the whole screen once, then cleans itself up. */
   function dangerFlash() {
     const flash = el('div', 'danger-flash');
@@ -186,6 +174,10 @@
 
   const buzz = (ms) => { try { navigator.vibrate?.(ms); } catch { /* unsupported */ } };
   const initials = (name) => (name || '?').trim().slice(0, 2).toUpperCase();
+  const nameIn = (g, id) => g.seats.find((s) => s.id === id)?.name ?? 'Someone';
+  /** "Sam", or "Sam and Pat" — whoever a gate is still waiting on. */
+  const andList = (names) =>
+    names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0] ?? 'the others';
 
   /* ── Render ─────────────────────────────────────────── */
 
@@ -473,20 +465,9 @@
     if (fresh || !node.firstChild) node.replaceChildren(el('span', null, last.text));
     else node.firstChild.textContent = last.text;
     // A fresh page load (not just a WS reconnect within the same session) starts
-    // lastLogId back at null, and the server's state can already have an old
-    // mistake as its last log entry — don't replay that event's buzz/popup.
-    if (lastLogId !== null && fresh) {
-      if (last.kind === 'shuriken') buzz(30);
-      if (last.kind === 'mistake') {
-        if (state.you.id === last.culprit) {
-          showMistakePopup(last.culpritMessage, 'culprit');
-          buzz([40, 60, 40]);
-        } else if (last.victims?.includes(state.you.id)) {
-          showMistakePopup(last.victimMessage, 'victim');
-          buzz(50);
-        }
-      }
-    }
+    // lastLogId back at null, and the state it lands on can already carry an old
+    // entry as its last — don't buzz for something that happened before we looked.
+    if (lastLogId !== null && fresh && last.kind === 'shuriken') buzz(30);
     lastLogId = last.id;
   }
 
@@ -529,34 +510,97 @@
   }
 
   function renderOverlays(g) {
-    const readyOverlay = $('overlay-ready');
-    readyOverlay.hidden = g.phase !== 'ready';
-    if (g.phase === 'ready') {
-      $('ready-level').textContent = g.level;
-      const list = $('ready-list');
-      list.replaceChildren(...g.seats.filter((s) => s.connected).map((s) => {
-        const chip = el('span', `chip${s.ready ? ' on' : ''}`, s.id === state.you.id ? 'You' : s.name);
-        // Only the player who just readied pops; the rest sit still.
-        if (s.ready && !prev.ready.includes(s.id)) chip.classList.add('just');
-        return chip;
-      }));
-      prev.ready = g.seats.filter((s) => s.ready).map((s) => s.id);
-      const btn = $('btn-ready');
-      const iAmReady = g.ready.includes(state.you.id);
-      btn.disabled = iAmReady;
-      btn.textContent = iAmReady ? 'Waiting for the others…' : "I'm ready";
-    } else {
-      prev.ready = [];
-    }
+    renderReadyGate(g);
+    renderMistakeGate(g);
+    renderResult(g);
+  }
 
+  /** A row of player chips, lit for whoever has already acted. Returns the
+   *  lit ids, so the next render only pops the ones that just came on. */
+  function renderChipRow(node, seats, acted, before) {
+    node.replaceChildren(...seats.filter((s) => s.connected).map((s) => {
+      const on = acted.includes(s.id);
+      const chip = el('span', `chip${on ? ' on' : ''}`, s.id === state.you.id ? 'You' : s.name);
+      if (on && !before.includes(s.id)) chip.classList.add('just');
+      return chip;
+    }));
+    return [...acted];
+  }
+
+  function renderReadyGate(g) {
+    const overlay = $('overlay-ready');
+    overlay.hidden = g.phase !== 'ready';
+    if (g.phase !== 'ready') { prev.ready = []; return; }
+
+    $('ready-level').textContent = g.level;
+    prev.ready = renderChipRow($('ready-list'), g.seats, g.ready, prev.ready);
+    const btn = $('btn-ready');
+    const iAmReady = g.ready.includes(state.you.id);
+    btn.disabled = iAmReady;
+    btn.textContent = iAmReady ? 'Waiting for the others…' : "I'm ready";
+  }
+
+  /**
+   * Somebody played out of turn: the table stops here. The player who jumped
+   * and the player who was sitting on the lowest card each get told, in their
+   * own words, and play only resumes once both have owned it. Everyone else
+   * watches — nobody can touch a card behind this.
+   */
+  function renderMistakeGate(g) {
+    const overlay = $('overlay-mistake');
+    overlay.hidden = g.phase !== 'mistake';
+    if (g.phase !== 'mistake') return;
+
+    const m = g.mistake;
+    const you = state.you.id;
+    const mine = you === m.culprit || you === m.victim;
+
+    const iconBox = $('mistake-icon');
+    iconBox.className = `result-icon${mine ? ' bad' : ''}`;
+    iconBox.replaceChildren(icon('x'));
+
+    // Their own line if they are in it, otherwise plainly what happened.
+    $('mistake-title').textContent = m.message ?? 'Out of order';
+    $('mistake-cards').replaceChildren(
+      mistakeCard(m.card, 'played', 'bad'),
+      mistakeCard(m.lowest, 'should have gone first', 'live'),
+    );
+    $('mistake-body').textContent = `${
+      you === m.culprit
+        ? `You played ${m.card} while ${nameIn(g, m.victim)} was still holding ${m.lowest}.`
+        : you === m.victim
+          ? `${nameIn(g, m.culprit)} played ${m.card} while you were still holding ${m.lowest}.`
+          : `${nameIn(g, m.culprit)} played ${m.card} while ${nameIn(g, m.victim)} was still holding ${m.lowest}.`
+    } It cost a life.`;
+
+    const btn = $('btn-mistake');
+    const yours = m.waitingOn.includes(you);
+    btn.disabled = !yours;
+    btn.textContent = yours
+      ? 'My bad'
+      : `Waiting for ${andList(m.waitingOn.map((id) => nameIn(g, id)))}…`;
+    btn.onclick = () => send({ type: 'ackMistake' });
+  }
+
+  /** One of the two cards the mistake was between, with what it was. */
+  function mistakeCard(value, label, cls) {
+    const box = el('span', `mcard ${cls}`);
+    box.append(el('b', null, value), el('em', null, label));
+    return box;
+  }
+
+  function renderResult(g) {
     const result = $('overlay-result');
     const done = g.phase === 'levelCleared' || g.phase === 'won' || g.phase === 'lost';
     result.hidden = !done;
+    $('result-list').hidden = g.phase !== 'lost';
+    if (g.phase !== 'lost') prev.done = [];
     if (!done) return;
 
     const iconBox = $('result-icon');
     const btn = $('btn-result');
     iconBox.className = 'result-icon';
+    btn.disabled = false; // an earlier run can have left it waiting on somebody
 
     if (g.phase === 'levelCleared') {
       const lost = g.livesLostThisLevel;
@@ -585,16 +629,21 @@
       btn.disabled = !state.you.isHost;
       btn.onclick = () => send({ type: 'playAgain' });
     } else {
+      // Lost. Nobody is moved off the final board until everybody has said so:
+      // the run is over either way, and it is the table's to sit with.
       iconBox.classList.add('bad');
       iconBox.replaceChildren(icon('x'));
       const outOfTime = g.lostTo === 'time';
       $('result-title').textContent = outOfTime ? 'Out of time' : 'Out of lives';
-      $('result-body').textContent = outOfTime
+      $('result-body').textContent = `${outOfTime
         ? `The clock ran out on level ${g.level} of ${g.maxLevel}.`
-        : `You made it to level ${g.level} of ${g.maxLevel}.`;
-      btn.textContent = state.you.isHost ? 'Play again' : 'Waiting for the host…';
-      btn.disabled = !state.you.isHost;
-      btn.onclick = () => send({ type: 'playAgain' });
+        : `You made it to level ${g.level} of ${g.maxLevel}.`
+      } Sit with it as long as you like — the room goes back together.`;
+      prev.done = renderChipRow($('result-list'), g.seats, g.done, prev.done);
+      const iAmDone = g.done.includes(state.you.id);
+      btn.disabled = iAmDone;
+      btn.textContent = iAmDone ? 'Waiting for the others…' : 'Back to the lobby';
+      btn.onclick = () => send({ type: 'backToLobby' });
     }
   }
 

@@ -10,6 +10,9 @@ import {
   setReady,
   playCard,
   toggleStarVote,
+  acknowledgeMistake,
+  dismissRun,
+  settleGates,
   nextLevel,
   checkTimeout,
   setClockPaused,
@@ -124,15 +127,20 @@ function syncTimer(room, now) {
 }
 
 /**
- * A disconnected player's cards cannot be played by anyone, so a timed level
- * would be unclearable through no fault of the table: hold the clock until
- * every seat is back. Driven from broadcast(), which every connection change
- * already funnels through.
+ * Bring the room's gates and its clock in line with who is actually here.
+ * Driven from broadcast(), which every connection change already funnels
+ * through, so a phone that dies behind a gate never freezes the room.
  */
-function syncClockPause(room, now) {
+function settleRoom(room, now) {
   if (!room.game) return;
-  const waiting = room.game.playerIds.some((id) => !room.players.get(id)?.connected);
-  setClockPaused(room.game, waiting, now);
+  if (settleGates(room.game, activeIds(room))) return endGame(room);
+  // A disconnected player's cards cannot be played by anyone, and an
+  // unacknowledged mistake stops play outright: either way a timed level would
+  // run down through no fault of the table, so the clock waits too.
+  const held =
+    room.game.phase === 'mistake' ||
+    room.game.playerIds.some((id) => !room.players.get(id)?.connected);
+  setClockPaused(room.game, held, now);
 }
 
 /** Drop a room for good, timer and all, so nothing fires against a dead room. */
@@ -146,7 +154,7 @@ function broadcast(room) {
   // time cannot shift by a millisecond between deciding it and sending it.
   const now = Date.now();
   room.updatedAt = now;
-  syncClockPause(room, now);
+  settleRoom(room, now);
   syncTimer(room, now);
   for (const p of room.players.values()) {
     if (p.connected) send(p.ws, roomState(room, p.id, now));
@@ -191,9 +199,12 @@ function handleJoin(ws, ctx, msg) {
   if (!room) return fail(ws, `No room called ${code || '????'}.`);
   if (msg.playerId && room.removed.has(msg.playerId)) return fail(ws, 'The host removed you from that room.');
 
-  // A finished run is finished: the room drops back to the lobby as soon as
-  // anyone joins, so nobody walks into the old game's lives and shurikens.
-  if (room.game && (room.game.phase === 'won' || room.game.phase === 'lost')) endGame(room);
+  // A run the whole table has walked away from is over: the room drops back to
+  // the lobby, so nobody walks into the old game's lives and shurikens. While
+  // somebody is still sitting with the result, the rejoiner joins them there
+  // instead — ending it here would pull everyone else off it mid-look.
+  const finished = room.game?.phase === 'won' || room.game?.phase === 'lost';
+  if (finished && activeIds(room).length === 0) endGame(room);
 
   // An impatient second tap on Join is the same person, not a new one. If this
   // socket already holds a seat here, hand that seat straight back instead of
@@ -320,6 +331,20 @@ function handleMessage(ws, ctx, msg) {
       const result = playCard(room.game, ctx.playerId, Number(msg.card), nameOfIn(room));
       if (!result.ok) return fail(ws, result.error);
       return broadcast(room);
+    }
+
+    case 'ackMistake': {
+      const room = requireGame(ws, ctx);
+      if (!room) return;
+      acknowledgeMistake(room.game, ctx.playerId);
+      return broadcast(room); // the gate itself is settled in broadcast
+    }
+
+    case 'backToLobby': {
+      const room = requireGame(ws, ctx);
+      if (!room) return;
+      dismissRun(room.game, ctx.playerId);
+      return broadcast(room); // the last one out ends the run, from settleRoom
     }
 
     case 'star': {

@@ -4,7 +4,9 @@
 //   * Deck is 1-100, all distinct. On level N every player is dealt N cards.
 //   * Cards must be played into one shared ascending pile, without communicating.
 //   * Playing a card while a lower card is still in someone's hand costs 1 life,
-//     and every card lower than the one played is discarded.
+//     and every card lower than the one played is discarded. The table then
+//     stops until the two players it happened between have owned it (see the
+//     'mistake' phase below) — a house rule, not the printed one.
 //   * A shuriken may be thrown by unanimous agreement: everyone discards their
 //     lowest card face up.
 //   * Lives at 0 -> the run is lost. Finishing the last level -> the run is won.
@@ -29,7 +31,8 @@ const REWARDS = { 2: 'shuriken', 3: 'life', 5: 'shuriken', 6: 'life', 8: 'shurik
 export const SECONDS_PER_CARD = 20;
 
 // Playful trash-talk shown to whoever caused a mistake, and to whoever was
-// holding one of the burned cards. Edit here to retune the voice/rotation.
+// sitting on the lowest card when it happened. Edit here to retune the
+// voice/rotation.
 const CULPRIT_MESSAGES = [
   'Not so fast, buster.',
   'Slow your roll, champ.',
@@ -73,7 +76,7 @@ export function createGame(playerIds, { timed = false, secondsPerCard = SECONDS_
     hands: {},
     pile: [], // cards successfully played, ascending
     discarded: [], // cards lost to mistakes or shurikens
-    phase: 'ready', // ready | playing | levelCleared | won | lost
+    phase: 'ready', // ready | playing | mistake | levelCleared | won | lost
     timed,
     msPerCard: secondsPerCard * 1000,
     // A level's clock is either running (deadlineAt, epoch ms) or paused
@@ -84,6 +87,10 @@ export function createGame(playerIds, { timed = false, secondsPerCard = SECONDS_
     lostTo: null, // 'lives' | 'time', once the run is lost
     ready: [],
     starVotes: [],
+    // Set exactly while the phase is 'mistake', and never otherwise: the two
+    // players a mistake happened between, and which of them has owned it.
+    mistake: null,
+    done: [], // who has finished looking at a lost run
     lastReward: null,
     livesLostThisLevel: 0,
     log: [],
@@ -168,6 +175,7 @@ export function setReady(game, playerId, activeIds, now = Date.now()) {
  * lower card back is always a mistake against yourself.
  */
 export function playCard(game, playerId, card, nameOf) {
+  if (game.phase === 'mistake') return { ok: false, error: 'Own that mistake first.' };
   if (game.phase !== 'playing') return { ok: false, error: 'The level has not started yet.' };
   const hand = game.hands[playerId] ?? [];
   if (!hand.includes(card)) return { ok: false, error: 'That card is not in your hand.' };
@@ -182,6 +190,9 @@ export function playCard(game, playerId, card, nameOf) {
     log(game, 'play', `${nameOf(playerId)} played ${card}.`, { card });
   } else {
     // Mistake: every card below the one played is burned, and it costs a life.
+    // Whoever holds the lowest one is the player who should have gone first —
+    // read off before the burn empties their hand.
+    const holder = game.playerIds.find((id) => (game.hands[id] ?? []).includes(lowest));
     const burned = [];
     const victims = new Set();
     for (const id of game.playerIds) {
@@ -193,29 +204,76 @@ export function playCard(game, playerId, card, nameOf) {
     }
     burned.sort((a, b) => a - b);
     game.discarded.push(...burned);
-    game.lives -= 1;
+    game.lives = Math.max(0, game.lives - 1);
     game.livesLostThisLevel += 1;
     log(game, 'mistake', `${nameOf(playerId)} played ${card}. ${burned.join(', ')} were still out. Lost a life.`, {
       card,
       burned,
       culprit: playerId,
       victims: [...victims],
+    });
+    // Everything the mistake costs beyond the life — the level ending, the run
+    // being lost — waits behind resolveMistake, so neither player can be moved
+    // off the callout before they have seen it.
+    game.phase = 'mistake';
+    game.mistake = {
+      card,
+      lowest,
+      culprit: playerId,
+      victim: holder,
+      acks: [],
       culpritMessage: pick(CULPRIT_MESSAGES),
       victimMessage: pick(VICTIM_MESSAGES),
-    });
-    if (game.lives <= 0) {
-      game.lives = 0;
-      loseRun(game, 'lives', 'Out of lives. The run is over.');
-      return { ok: true };
-    }
+    };
+    return { ok: true };
   }
 
   checkLevelEnd(game);
   return { ok: true };
 }
 
+/** Own up to the mistake on the table. Only the two players it was between can. */
+export function acknowledgeMistake(game, playerId) {
+  if (game.phase !== 'mistake') return;
+  const { culprit, victim, acks } = game.mistake;
+  if ((playerId === culprit || playerId === victim) && !acks.includes(playerId)) acks.push(playerId);
+}
+
+/** Step away from a lost run. The room waits for everyone before it moves on. */
+export function dismissRun(game, playerId) {
+  if (game.phase !== 'lost') return;
+  if (!game.done.includes(playerId)) game.done.push(playerId);
+}
+
+/**
+ * Resolve whatever the table is waiting on, given who is still connected.
+ * Both gates only ever wait on players who are actually here: a phone that
+ * dies behind one must not freeze the room for everybody else.
+ *
+ * Returns true once everyone has stepped away from a lost run — the room's
+ * cue to clear the game away.
+ */
+export function settleGates(game, activeIds) {
+  if (game.phase === 'mistake') {
+    const { culprit, victim, acks } = game.mistake;
+    const owed = [culprit, victim].filter((id) => activeIds.includes(id) && !acks.includes(id));
+    if (owed.length === 0) resolveMistake(game);
+    return false;
+  }
+  return game.phase === 'lost' && activeIds.length > 0 && activeIds.every((id) => game.done.includes(id));
+}
+
+/** Both players have owned the mistake: let its consequences land. */
+function resolveMistake(game) {
+  game.mistake = null;
+  game.phase = 'playing';
+  if (game.lives === 0) return loseRun(game, 'lives', 'Out of lives. The run is over.');
+  checkLevelEnd(game);
+}
+
 /** Vote to throw a shuriken. Unanimous among connected players -> it lands. */
 export function toggleStarVote(game, playerId, activeIds, nameOf) {
+  if (game.phase === 'mistake') return { ok: false, error: 'Own that mistake first.' };
   if (game.phase !== 'playing') return { ok: false, error: 'The level has not started yet.' };
   if (game.shurikens <= 0) return { ok: false, error: 'No shurikens left.' };
 
@@ -290,6 +348,24 @@ export function nextLevel(game) {
 }
 
 /**
+ * The mistake gate as one player sees it: what happened, whose acknowledgement
+ * is still outstanding, and — for the two it was between — a line of their own.
+ */
+function mistakeView(game, playerId, players) {
+  const m = game.mistake;
+  if (!m) return null;
+  return {
+    card: m.card,
+    lowest: m.lowest,
+    culprit: m.culprit,
+    victim: m.victim,
+    // Only players who are still here are waited on, so the label reads true.
+    waitingOn: [m.culprit, m.victim].filter((id) => !m.acks.includes(id) && players.get(id)?.connected),
+    message: playerId === m.culprit ? m.culpritMessage : playerId === m.victim ? m.victimMessage : null,
+  };
+}
+
+/**
  * View of the game for one player: their own hand in full, everyone else's as
  * a count only. This is the whole reason the rules live on the server.
  */
@@ -319,6 +395,8 @@ export function viewFor(game, playerId, players, now = Date.now()) {
     livesLostThisLevel: game.livesLostThisLevel,
     ready: game.ready,
     starVotes: game.starVotes,
+    mistake: mistakeView(game, playerId, players),
+    done: game.done,
     log: game.log.slice(-12),
     seats: game.playerIds.map((id) => ({
       id,

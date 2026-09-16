@@ -145,7 +145,8 @@ body {
 .ghost,
 .avatar,
 .seat-count,
-.stat-value {
+.stat-value,
+.mcard b {
   font-family: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'ss03';
@@ -954,6 +955,7 @@ input:focus {
 .overlay-card > :nth-child(2) { animation-delay: 150ms; }
 .overlay-card > :nth-child(3) { animation-delay: 210ms; }
 .overlay-card > :nth-child(4) { animation-delay: 270ms; }
+.overlay-card > :nth-child(5) { animation-delay: 330ms; }
 @keyframes sheetChild {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: none; }
@@ -981,8 +983,10 @@ input:focus {
 .result-icon.bad { color: var(--danger); border-color: var(--danger-ring); background: var(--danger-dim); }
 .result-icon.win { color: var(--signal); border-color: var(--signal-ring); background: var(--signal-dim); }
 
-.ready-list { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
-.ready-list .chip {
+/* One row of player chips, lit as each of them acts: the ready gate, and the
+   table stepping away from a lost run. */
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.chip-row .chip {
   font-size: 0.76rem;
   padding: 5px 12px;
   border-radius: var(--r-pill);
@@ -991,13 +995,13 @@ input:focus {
   border: 1px solid var(--line-soft);
   transition: color var(--t-3) var(--ease), border-color var(--t-3) var(--ease), background var(--t-3) var(--ease);
 }
-.ready-list .chip.on {
+.chip-row .chip.on {
   color: var(--live);
   border-color: var(--live-ring);
   background: var(--live-dim);
 }
-/* Only the player who just readied pops. */
-.ready-list .chip.just { animation: checkIn var(--t-3) var(--ease-spring); }
+/* Only the player who just acted pops. */
+.chip-row .chip.just { animation: checkIn var(--t-3) var(--ease-spring); }
 @keyframes checkIn {
   0%   { transform: scale(1); }
   45%  { transform: scale(1.12); }
@@ -1039,33 +1043,38 @@ input:focus {
   to   { opacity: 1; transform: translate(-50%, 0); }
 }
 
-/* ── Mistake popup ──────────────────────────────────────── */
-.mistake-popup {
-  position: fixed;
-  left: 50%;
-  top: 28%;
-  z-index: var(--z-toast);
-  max-width: min(88vw, 350px);
-  padding: 17px 22px;
-  border-radius: var(--r-lg);
-  font-size: 1.1rem;
-  font-weight: 550;
-  line-height: 1.35;
-  text-align: center;
-  color: var(--fg);
-  background: var(--surface);
+/* ── Mistake gate ───────────────────────────────────────── */
+/* The two cards a mistake was between, side by side: what went down, and what
+   was still in somebody's hand. Mono, like every other number on the table. */
+.mistake-cards {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+  justify-content: center;
+}
+.mcard {
+  flex: 1 1 0;
+  max-width: 140px;
+  display: grid;
+  gap: 2px;
+  padding: 12px 10px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
   border: 1px solid var(--line);
-  box-shadow: var(--shadow-2);
 }
-.mistake-popup[hidden] { display: none; }
-.mistake-popup.culprit { border-color: var(--danger); background: linear-gradient(var(--danger-dim), transparent), var(--surface); }
-.mistake-popup.victim { border-color: var(--live); background: linear-gradient(var(--live-dim), transparent), var(--surface); }
-.mistake-popup.show { animation: popupIn var(--t-3) var(--ease-spring) both; }
-@keyframes popupIn {
-  0%   { opacity: 0; transform: translate(-50%, 0) scale(0.9); }
-  100% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+.mcard b {
+  font-size: 1.9rem;
+  font-weight: 600;
+  line-height: 1;
 }
-.mistake-popup { transform: translateX(-50%); }
+.mcard em {
+  font-style: normal;
+  font-size: 0.68rem;
+  line-height: 1.25;
+  color: var(--fg-3);
+}
+.mcard.bad { color: var(--danger); border-color: var(--danger-ring); background: var(--danger-dim); }
+.mcard.live { color: var(--live); border-color: var(--live-ring); background: var(--live-dim); }
 
 /* A mistake washes the whole screen, briefly. */
 .danger-flash {
@@ -1105,7 +1114,7 @@ input:focus {
     scroll-behavior: auto !important;
   }
   .screen, .overlay, .overlay-card, .overlay-card > *,
-  .feed > span, .players li.arriving, .card.dealt, .toast, .mistake-popup.show {
+  .feed > span, .players li.arriving, .card.dealt, .toast {
     animation: fadeOnly 160ms linear both !important;
   }
   @keyframes fadeOnly { from { opacity: 0; } to { opacity: 1; } }
